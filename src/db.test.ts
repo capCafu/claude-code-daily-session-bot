@@ -8,6 +8,10 @@ import {
   getPendingSchedules,
   markScheduleFired,
   deleteSchedule,
+  insertDailySchedule,
+  getDailySchedules,
+  updateDailyScheduleNext,
+  deleteDailySchedule,
 } from "./db";
 
 beforeEach(() => {
@@ -119,5 +123,54 @@ describe("schedules", () => {
 
   it("deleteSchedule returns false for non-existent id", () => {
     expect(deleteSchedule(999)).toBe(false);
+  });
+});
+
+describe("daily schedules", () => {
+  const target = new Date(Date.now() + 7_200_000).toISOString();
+  const warmup = new Date(Date.now() + 3_600_000).toISOString();
+  const nextTarget = new Date(Date.now() + 24 * 3_600_000 + 7_200_000).toISOString();
+  const nextWarmup = new Date(Date.now() + 24 * 3_600_000 + 3_600_000).toISOString();
+
+  it("insertDailySchedule returns schedule with all fields", () => {
+    const s = insertDailySchedule("7:29 AM", 5, target, warmup);
+    expect(s.id).toBeDefined();
+    expect(s.time_of_day).toBe("7:29 AM");
+    expect(s.hours_remaining).toBe(5);
+    expect(s.target_datetime).toBe(target);
+    expect(s.warmup_at).toBe(warmup);
+    expect(s.last_fired_at).toBeNull();
+  });
+
+  it("getDailySchedules returns schedules ordered by next warmup", () => {
+    insertDailySchedule("10:00", 5, nextTarget, nextWarmup);
+    insertDailySchedule("7:29 AM", 5, target, warmup);
+
+    const daily = getDailySchedules();
+
+    expect(daily.map((s) => s.time_of_day)).toEqual(["7:29 AM", "10:00"]);
+  });
+
+  it("updateDailyScheduleNext updates next occurrence and last fired time", () => {
+    const s = insertDailySchedule("7:29 AM", 5, target, warmup);
+    const firedAt = new Date().toISOString();
+
+    const updated = updateDailyScheduleNext(s.id, nextTarget, nextWarmup, firedAt);
+
+    expect(updated).toBeDefined();
+    expect(updated!.target_datetime).toBe(nextTarget);
+    expect(updated!.warmup_at).toBe(nextWarmup);
+    expect(updated!.last_fired_at).toBe(firedAt);
+  });
+
+  it("deleteDailySchedule removes schedule", () => {
+    const s = insertDailySchedule("7:29 AM", 5, target, warmup);
+
+    expect(deleteDailySchedule(s.id)).toBe(true);
+    expect(getDailySchedules()).toHaveLength(0);
+  });
+
+  it("deleteDailySchedule returns false for non-existent id", () => {
+    expect(deleteDailySchedule(999)).toBe(false);
   });
 });

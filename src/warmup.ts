@@ -8,6 +8,14 @@ export function parseWarmupOutput(stdout: string): {
   sessionArgs: Parameters<typeof insertSession>;
 } {
   const json = JSON.parse(stdout);
+  if (json.is_error || json.api_error_status) {
+    const error =
+      typeof json.result === "string" && json.result.trim()
+        ? json.result
+        : `Claude API error${json.api_error_status ? ` ${json.api_error_status}` : ""}`;
+    throw new Error(error);
+  }
+
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_DURATION_MS);
 
@@ -31,6 +39,32 @@ export function parseWarmupOutput(stdout: string): {
   };
 }
 
+export function formatWarmupError(
+  stdout: string,
+  stderr: string,
+  code: number | null
+): string {
+  const stderrText = stderr.trim();
+  if (stderrText) return stderrText;
+
+  const stdoutText = stdout.trim();
+  if (stdoutText) {
+    try {
+      const json = JSON.parse(stdoutText);
+      if (typeof json.result === "string" && json.result.trim()) {
+        return json.result;
+      }
+      if (json.api_error_status) {
+        return `Claude API error ${json.api_error_status}`;
+      }
+    } catch {
+      return stdoutText.slice(0, 1000);
+    }
+  }
+
+  return `exit code ${code ?? "unknown"}`;
+}
+
 export function warmup(): Promise<{ result: WarmupResult; session?: Session }> {
   return new Promise((resolve) => {
     const proc = spawn("claude", ["-p", "ready", "--output-format", "json"], {
@@ -46,7 +80,7 @@ export function warmup(): Promise<{ result: WarmupResult; session?: Session }> {
     proc.on("close", (code) => {
       if (code !== 0) {
         resolve({
-          result: { success: false, error: stderr || `exit code ${code}` },
+          result: { success: false, error: formatWarmupError(stdout, stderr, code) },
         });
         return;
       }
@@ -55,9 +89,12 @@ export function warmup(): Promise<{ result: WarmupResult; session?: Session }> {
         const { warmupResult, sessionArgs } = parseWarmupOutput(stdout);
         const session = insertSession(...sessionArgs);
         resolve({ result: warmupResult, session });
-      } catch {
+      } catch (err) {
         resolve({
-          result: { success: false, error: `Failed to parse output: ${stdout}` },
+          result: {
+            success: false,
+            error: err instanceof Error ? err.message : `Failed to parse output: ${stdout}`,
+          },
         });
       }
     });

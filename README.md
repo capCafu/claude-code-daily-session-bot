@@ -19,6 +19,9 @@ This bot starts sessions while you sleep. Schedule `/schedule tomorrow 9am` and 
 | `/schedule <datetime> [hours]` | Schedule a warmup. At `<datetime>`, you'll have `[hours]` remaining (default: 2) |
 | `/schedules`                   | List pending scheduled warmups                                                   |
 | `/cancel <id>`                 | Cancel a scheduled warmup                                                        |
+| `/daily <time> [hours]`        | Schedule a daily warmup. At `<time>`, you'll have `[hours]` remaining            |
+| `/dailies`                     | List daily scheduled warmups                                                     |
+| `/cancel_daily <id>`           | Cancel a daily scheduled warmup                                                  |
 | `/history`                     | Show recent session history                                                      |
 
 <details>
@@ -36,6 +39,8 @@ This bot starts sessions while you sleep. Schedule `/schedule tomorrow 9am` and 
 /schedule tomorrow 9am        # 2h remaining at 9am → warmup at 6am
 /schedule monday 14:00 3      # 3h remaining at 14:00 → warmup at 12:00
 /schedule jan 30 8:00 4h      # 4h remaining at 8:00 → warmup at 7:00
+/daily 7:00 AM 5h             # warm up every day at 7:00am
+/daily 9:00 AM 2h             # warm up every day at 6:00am
 ```
 
 The bot computes: `warmup_time = target - (5h - hours_remaining)`.
@@ -44,7 +49,7 @@ The bot computes: `warmup_time = target - (5h - hours_remaining)`.
 
 1. **Warmup**: Runs `claude -p "ready" --output-format json` which sends a minimal prompt to Claude, starting the 5-hour session timer. The JSON response includes `session_id` and token usage.
 2. **Session tracking**: Each warmup is recorded in a local SQLite database with start time, expiry (start + 5h), and token usage.
-3. **Scheduling**: Schedules are persisted in SQLite and restored on bot restart using `setTimeout`.
+3. **Scheduling**: One-time and daily schedules are persisted in SQLite and restored on bot restart using `setTimeout`.
 4. **Auth**: Only Telegram user IDs listed in `TELEGRAM_ALLOWED_USER_IDS` can use the bot.
 
 ### Limitations
@@ -81,12 +86,21 @@ pnpm start
 | `TELEGRAM_ALLOWED_USER_IDS` | Comma-separated Telegram user IDs                   |
 | `TIMEZONE`                  | Display timezone (default: `UTC`)                   |
 | `DB_PATH`                   | SQLite database path (default: `data/bot.db`)       |
-| `CLAUDE_CODE_OAUTH_TOKEN`   | OAuth token for Claude CLI auth (used in Docker)    |
 
 ## Docker
+
+First copy your local Claude CLI auth files into the ignored `data/` directory:
+
+```bash
+mkdir -p data/claude-home
+cp -a ~/.claude data/claude-home/.claude
+cp ~/.claude.json data/claude-home/.claude.json
+```
+
+Then start the container:
 
 ```bash
 docker compose up -d --build
 ```
 
-Set `CLAUDE_CODE_OAUTH_TOKEN` in your `.env` file for Claude CLI auth inside the container.
+Do not commit `data/claude-home` or `.env`; they contain local credentials and are ignored by git.

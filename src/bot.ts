@@ -1,9 +1,14 @@
 import TelegramBot from "node-telegram-bot-api";
 import * as chrono from "chrono-node";
 import { ALLOWED_USER_IDS, TIMEZONE } from "./config";
-import { getActiveSession, getSessionHistory, getPendingSchedules } from "./db";
+import {
+  getActiveSession,
+  getSessionHistory,
+  getPendingSchedules,
+  getDailySchedules,
+} from "./db";
 import { warmup } from "./warmup";
-import { addSchedule, cancelSchedule } from "./scheduler";
+import { addDailySchedule, addSchedule, cancelDailySchedule, cancelSchedule } from "./scheduler";
 
 const fmt = new Intl.DateTimeFormat("en-GB", {
   timeZone: TIMEZONE,
@@ -45,18 +50,22 @@ export function createBot(token: string): TelegramBot {
     const text = [
       `*Claude Code Session Bot*`,
       ``,
-      `/warmup — Start a session now`,
-      `/session — Show active session info`,
-      `/schedule \`<datetime>\` \`[hours]\` — Schedule a warmup`,
-      `/schedules — List pending schedules`,
-      `/cancel \`<id>\` — Cancel a schedule`,
-      `/history — Recent session history`,
-      `/help — Show this message`,
+      `\`/warmup\` — Start a session now`,
+      `\`/session\` — Show active session info`,
+      `\`/schedule\` \`<datetime>\` \`[hours]\` — Schedule a warmup`,
+      `\`/schedules\` — List pending schedules`,
+      `\`/daily\` \`<time>\` \`[hours]\` — Schedule a daily warmup`,
+      `\`/dailies\` — List daily schedules`,
+      `\`/cancel_daily\` \`<id>\` — Cancel a daily schedule`,
+      `\`/cancel\` \`<id>\` — Cancel a schedule`,
+      `\`/history\` — Recent session history`,
+      `\`/help\` — Show this message`,
       ``,
       `*Schedule examples*`,
       `/schedule tomorrow 9am`,
       `/schedule monday 14:00 3h`,
       `/schedule jan 30 8:00 4h`,
+      `/daily 7:29 AM 5h`,
     ];
     bot.sendMessage(msg.chat.id, text.join("\n"), { parse_mode: "Markdown" });
   });
@@ -140,6 +149,46 @@ export function createBot(token: string): TelegramBot {
         `ID ${s.id}: warmup at ${fmt.format(new Date(s.warmup_at))} (target: ${fmt.format(new Date(s.target_datetime))}, ${s.hours_remaining}h remaining)`
     );
     bot.sendMessage(msg.chat.id, lines.join("\n"));
+  });
+
+  bot.onText(/\/daily (.+)/, (msg, match) => {
+    if (!isAllowed(msg)) return;
+    const input = match![1].trim();
+    const { dateStr, hours } = parseScheduleInput(input);
+
+    const result = addDailySchedule(dateStr, hours);
+    if (typeof result === "string") {
+      bot.sendMessage(msg.chat.id, result, { parse_mode: "Markdown" });
+      return;
+    }
+
+    const lines = [
+      `Daily schedule created (ID: ${result.id})`,
+      `Target: every day at *${result.time_of_day}* with *${hours}h* remaining`,
+      `Next warmup at: *${fmt.format(new Date(result.warmup_at))}*`,
+    ];
+    bot.sendMessage(msg.chat.id, lines.join("\n"), { parse_mode: "Markdown" });
+  });
+
+  bot.onText(/\/dailies/, (msg) => {
+    if (!isAllowed(msg)) return;
+    const daily = getDailySchedules();
+    if (daily.length === 0) {
+      bot.sendMessage(msg.chat.id, "No daily schedules.");
+      return;
+    }
+    const lines = daily.map(
+      (s) =>
+        `ID ${s.id}: every day at ${s.time_of_day} (${s.hours_remaining}h remaining), next warmup at ${fmt.format(new Date(s.warmup_at))}`
+    );
+    bot.sendMessage(msg.chat.id, lines.join("\n"));
+  });
+
+  bot.onText(/\/cancel_daily (\d+)/, (msg, match) => {
+    if (!isAllowed(msg)) return;
+    const id = parseInt(match![1], 10);
+    const ok = cancelDailySchedule(id);
+    bot.sendMessage(msg.chat.id, ok ? `Daily schedule ${id} cancelled.` : `Daily schedule ${id} not found.`);
   });
 
   bot.onText(/\/cancel (\d+)/, (msg, match) => {

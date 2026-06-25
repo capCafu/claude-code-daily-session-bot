@@ -12,10 +12,11 @@ Telegram bot that manages Claude Code Pro 5-hour session cooldowns. Schedules au
 pnpm dev            # run with tsx --watch (hot reload)
 pnpm build          # tsc → dist/
 pnpm start          # run compiled dist/main.js
+pnpm test           # run Vitest tests
 docker compose up -d --build  # production deploy
 ```
 
-No test or lint setup exists yet.
+Tests use Vitest and live alongside source files as `src/**/*.test.ts`.
 
 ## Architecture
 
@@ -23,11 +24,11 @@ TypeScript (ES2022/CommonJS, strict), SQLite via better-sqlite3 (WAL mode), Tele
 
 All source files are located in `src/`:
 
-- **main.ts** — entry point; inits DB, bot, restores pending schedules
-- **bot.ts** — Telegram command handlers (`/warmup`, `/schedule`, `/session`, `/cancel`, `/history`, `/schedules`)
-- **warmup.ts** — spawns `claude -p "ready" --output-format json` subprocess; parses token usage
-- **scheduler.ts** — in-memory `setTimeout` timers + DB persistence; restores timers on restart
-- **db.ts** — SQLite CRUD for `sessions` and `schedules` tables
+- **main.ts** — entry point; inits DB, bot, restores pending and daily schedules
+- **bot.ts** — Telegram command handlers (`/warmup`, `/schedule`, `/daily`, `/session`, `/cancel`, `/cancel_daily`, `/history`, `/schedules`, `/dailies`)
+- **warmup.ts** — spawns `claude -p "ready" --output-format json` subprocess; parses token usage and Claude API error payloads
+- **scheduler.ts** — in-memory `setTimeout` timers + DB persistence; restores one-time and daily timers on restart
+- **db.ts** — SQLite CRUD for `sessions`, `schedules`, and `daily_schedules` tables
 - **config.ts** — env var validation (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_IDS`, optional `TIMEZONE`, `DB_PATH`)
 - **types.ts** — interfaces: `Session`, `Schedule`, `WarmupResult`
 
@@ -39,4 +40,5 @@ See [README.md](README.md) for full usage details.
 - Only tracks sessions the bot starts (no external session tracking)
 - Auth: only Telegram user IDs in `TELEGRAM_ALLOWED_USER_IDS` can use commands
 - Date parsing via chrono-node (natural language: "tomorrow 9am", "jan 30 8:00")
-- Requires `claude` CLI installed and authenticated on host
+- Daily schedules reschedule themselves after each warmup
+- Requires `claude` CLI installed and authenticated on host; Docker mounts ignored Claude credentials from `data/claude-home`

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { parseWarmupOutput } from "./warmup";
+import { formatWarmupError, parseWarmupOutput } from "./warmup";
 
 describe("parseWarmupOutput", () => {
   beforeEach(() => {
@@ -70,5 +70,47 @@ describe("parseWarmupOutput", () => {
 
   it("throws on invalid JSON", () => {
     expect(() => parseWarmupOutput("not json")).toThrow();
+  });
+
+  it("throws when Claude returns an API error payload", () => {
+    const stdout = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      api_error_status: 429,
+      result: "You've hit your session limit",
+      session_id: "sess_limited",
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+      total_cost_usd: 0,
+    });
+
+    expect(() => parseWarmupOutput(stdout)).toThrow("You've hit your session limit");
+  });
+});
+
+describe("formatWarmupError", () => {
+  it("uses stderr when available", () => {
+    expect(formatWarmupError("", "command failed", 1)).toBe("command failed");
+  });
+
+  it("extracts Claude error JSON from stdout", () => {
+    const stdout = JSON.stringify({
+      is_error: true,
+      api_error_status: 401,
+      result: "Failed to authenticate. API Error: 401 Invalid bearer token",
+    });
+
+    expect(formatWarmupError(stdout, "", 1)).toBe(
+      "Failed to authenticate. API Error: 401 Invalid bearer token"
+    );
+  });
+
+  it("falls back to exit code when no output is available", () => {
+    expect(formatWarmupError("", "", 1)).toBe("exit code 1");
   });
 });

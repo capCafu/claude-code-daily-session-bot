@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { DB_PATH } from "./config";
-import type { Session, Schedule } from "./types";
+import type { Session, Schedule, DailySchedule } from "./types";
 
 let db: Database.Database;
 
@@ -28,6 +28,16 @@ export function initDb(path?: string): void {
       warmup_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
       fired INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS daily_schedules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      time_of_day TEXT NOT NULL,
+      hours_remaining REAL NOT NULL,
+      target_datetime TEXT NOT NULL,
+      warmup_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      last_fired_at TEXT
     );
   `);
 }
@@ -100,5 +110,54 @@ export function markScheduleFired(id: number): void {
 
 export function deleteSchedule(id: number): boolean {
   const result = db.prepare("DELETE FROM schedules WHERE id = ? AND fired = 0").run(id);
+  return result.changes > 0;
+}
+
+export function insertDailySchedule(
+  timeOfDay: string,
+  hoursRemaining: number,
+  targetDatetime: string,
+  warmupAt: string
+): DailySchedule {
+  const stmt = db.prepare(`
+    INSERT INTO daily_schedules (time_of_day, hours_remaining, target_datetime, warmup_at, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  const result = stmt.run(
+    timeOfDay,
+    hoursRemaining,
+    targetDatetime,
+    warmupAt,
+    new Date().toISOString()
+  );
+  return db
+    .prepare("SELECT * FROM daily_schedules WHERE id = ?")
+    .get(result.lastInsertRowid) as DailySchedule;
+}
+
+export function getDailySchedules(): DailySchedule[] {
+  return db
+    .prepare("SELECT * FROM daily_schedules ORDER BY warmup_at ASC")
+    .all() as DailySchedule[];
+}
+
+export function updateDailyScheduleNext(
+  id: number,
+  targetDatetime: string,
+  warmupAt: string,
+  lastFiredAt: string | null
+): DailySchedule | undefined {
+  db.prepare(`
+    UPDATE daily_schedules
+    SET target_datetime = ?, warmup_at = ?, last_fired_at = ?
+    WHERE id = ?
+  `).run(targetDatetime, warmupAt, lastFiredAt, id);
+  return db.prepare("SELECT * FROM daily_schedules WHERE id = ?").get(id) as
+    | DailySchedule
+    | undefined;
+}
+
+export function deleteDailySchedule(id: number): boolean {
+  const result = db.prepare("DELETE FROM daily_schedules WHERE id = ?").run(id);
   return result.changes > 0;
 }

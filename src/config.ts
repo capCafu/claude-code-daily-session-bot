@@ -6,6 +6,8 @@ export const ALLOWED_USER_IDS = (process.env.TELEGRAM_ALLOWED_USER_IDS ?? "")
   .map((id) => parseInt(id.trim(), 10))
   .filter((id) => !isNaN(id));
 export const TIMEZONE = process.env.TIMEZONE ?? "UTC";
+process.env.TZ = TIMEZONE;
+
 export const SESSION_DURATION_MS = 5 * 60 * 60 * 1000; // 5 hours
 export const DB_PATH = process.env.DB_PATH ?? "data/bot.db";
 

@@ -19,6 +19,16 @@ export interface Schedule {
   fired: number;
 }
 
+export interface DailySchedule {
+  id: number;
+  time_of_day: string;
+  hours_remaining: number;
+  target_datetime: string;
+  warmup_at: string;
+  created_at: string;
+  last_fired_at: string | null;
+}
+
 export interface WarmupResult {
   success: boolean;
   session_id?: string;

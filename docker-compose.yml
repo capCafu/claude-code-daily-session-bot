@@ -4,4 +4,6 @@ services:
     env_file: .env
     volumes:
       - ./data:/data
+      - ./data/claude-home/.claude:/root/.claude
+      - ./data/claude-home/.claude.json:/root/.claude.json
     restart: unless-stopped

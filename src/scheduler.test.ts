@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calculateWarmupAt } from "./scheduler";
+import { calculateNextDailyOccurrence, calculateWarmupAt } from "./scheduler";
 
 const FIVE_HOURS = 5 * 60 * 60 * 1000;
 
@@ -36,5 +36,31 @@ describe("calculateWarmupAt", () => {
     const result = calculateWarmupAt(target, 1);
     // warmup = target - 4h
     expect(result.toISOString()).toBe("2025-01-15T06:00:00.000Z");
+  });
+});
+
+describe("calculateNextDailyOccurrence", () => {
+  it("uses today's time when the warmup has not passed", () => {
+    const now = new Date("2025-01-15T06:00:00.000Z");
+    const result = calculateNextDailyOccurrence("10:00", 5, now);
+
+    expect(result).toBeDefined();
+    expect(result!.targetDatetime.toISOString()).toBe("2025-01-15T10:00:00.000Z");
+    expect(result!.warmupAt.toISOString()).toBe("2025-01-15T10:00:00.000Z");
+  });
+
+  it("uses tomorrow when today's warmup time has already passed", () => {
+    const now = new Date("2025-01-15T09:00:00.000Z");
+    const result = calculateNextDailyOccurrence("10:00", 2, now);
+
+    expect(result).toBeDefined();
+    expect(result!.targetDatetime.toISOString()).toBe("2025-01-16T10:00:00.000Z");
+    expect(result!.warmupAt.toISOString()).toBe("2025-01-16T07:00:00.000Z");
+  });
+
+  it("returns undefined for invalid time input", () => {
+    const now = new Date("2025-01-15T09:00:00.000Z");
+
+    expect(calculateNextDailyOccurrence("not a time", 5, now)).toBeUndefined();
   });
 });
