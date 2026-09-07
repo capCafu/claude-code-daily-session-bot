@@ -9,23 +9,23 @@ const bot = createBot(TELEGRAM_BOT_TOKEN);
 
 setScheduleCallback((schedule, success, error) => {
   const chatId = ALLOWED_USER_IDS[0];
-  if (success) {
-    bot.sendMessage(chatId, `Scheduled warmup fired (ID ${schedule.id}). Session started!`);
-  } else {
-    bot.sendMessage(chatId, `Scheduled warmup failed (ID ${schedule.id}): ${error}`);
-  }
+  const message = success
+    ? `Scheduled warmup fired (ID ${schedule.id}). Session started!`
+    : `Scheduled warmup failed (ID ${schedule.id}): ${error}`;
+  // Telegram can be unreachable; an unhandled rejection here would be noisy.
+  bot.sendMessage(chatId, message).catch((err) => {
+    console.error("Failed to send schedule notification:", err.message);
+  });
 });
 
 setDailyScheduleCallback((schedule, success, error) => {
   const chatId = ALLOWED_USER_IDS[0];
-  if (success) {
-    bot.sendMessage(
-      chatId,
-      `Daily warmup fired (ID ${schedule.id}). Session started! Next warmup: ${schedule.warmup_at}`
-    );
-  } else {
-    bot.sendMessage(chatId, `Daily warmup failed (ID ${schedule.id}): ${error}`);
-  }
+  const message = success
+    ? `Daily warmup fired (ID ${schedule.id}). Session started! Next warmup: ${schedule.warmup_at}`
+    : `Daily warmup failed (ID ${schedule.id}): ${error}`;
+  bot.sendMessage(chatId, message).catch((err) => {
+    console.error("Failed to send daily notification:", err.message);
+  });
 });
 
 restoreSchedules();
