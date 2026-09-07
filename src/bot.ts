@@ -11,6 +11,7 @@ import { warmup } from "./warmup";
 import {
   addDailySchedule,
   addSchedule,
+  addWorkdaySchedule,
   cancelDailySchedule,
   cancelSchedule,
   parseTimesOfDay,
@@ -61,6 +62,7 @@ export function createBot(token: string): TelegramBot {
       `\`/schedule\` \`<datetime>\` \`[hours]\` — Schedule a warmup`,
       `\`/schedules\` — List pending schedules`,
       `\`/daily\` \`<time[, time...]>\` \`[hours]\` — Schedule daily warmups`,
+      `\`/workday\` \`<start>-<end>\` \`[lead]\` — Plan warmups around your working hours`,
       `\`/dailies\` — List daily schedules`,
       `\`/cancel_daily\` \`<id>\` — Cancel a daily schedule`,
       `\`/cancel\` \`<id>\` — Cancel a schedule`,
@@ -73,6 +75,7 @@ export function createBot(token: string): TelegramBot {
       `/schedule jan 30 8:00 4h`,
       `/daily 7:29 AM 5h`,
       `/daily 7:00, 13:00, 18:00 5h`,
+      `/workday 9am-6pm`,
     ];
     bot.sendMessage(msg.chat.id, text.join("\n"), { parse_mode: "Markdown" });
   });
@@ -175,6 +178,27 @@ export function createBot(token: string): TelegramBot {
       `Target: every day at *${result.times_of_day}* with *${hours}h* remaining`,
       ...(perDay > 1 ? [`${perDay} warmups per day`] : []),
       `Next warmup at: *${fmt.format(new Date(result.warmup_at))}*`,
+    ];
+    bot.sendMessage(msg.chat.id, lines.join("\n"), { parse_mode: "Markdown" });
+  });
+
+  bot.onText(/\/workday (.+)/, (msg, match) => {
+    if (!isAllowed(msg)) return;
+    const input = match![1].trim();
+    const { dateStr, hours } = parseScheduleInput(input);
+
+    const result = addWorkdaySchedule(dateStr, hours);
+    if (typeof result === "string") {
+      bot.sendMessage(msg.chat.id, result, { parse_mode: "Markdown" });
+      return;
+    }
+
+    const { schedule, plan } = result;
+    const lines = [
+      `Workday schedule created (ID: ${schedule.id})`,
+      `Working *${plan.startLabel}-${plan.endLabel}*${plan.overnight ? " (overnight)" : ""}, *${plan.leadHours}h* left in the window when you start`,
+      `Warmups: *${schedule.times_of_day}* (${plan.times.length} per day)`,
+      `Next warmup at: *${fmt.format(new Date(schedule.warmup_at))}*`,
     ];
     bot.sendMessage(msg.chat.id, lines.join("\n"), { parse_mode: "Markdown" });
   });

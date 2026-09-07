@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   addDailySchedule,
+  addWorkdaySchedule,
   calculateNextDailyOccurrence,
   calculateWarmupAt,
   parseTimesOfDay,
+  planWorkday,
 } from "./scheduler";
 
 const FIVE_HOURS = 5 * 60 * 60 * 1000;
@@ -163,5 +165,115 @@ describe("addDailySchedule validation", () => {
 
     expect(result).toContain("Could not parse daily times:");
     expect(result).toContain("nope, also bad");
+  });
+});
+
+// TIMEZONE is UTC in tests (see test/setup.ts), so labels read as plain UTC times.
+describe("planWorkday", () => {
+  const now = new Date("2025-01-15T00:00:00.000Z");
+  const plan = (input: string, lead = 2) => {
+    const result = planWorkday(input, lead, now);
+    if (typeof result === "string") throw new Error(`unexpected error: ${result}`);
+    return result;
+  };
+
+  it("leaves the requested hours on the clock when the workday starts", () => {
+    // 2h left at 09:00 means the running window opened at 06:00 and ends at 11:00.
+    expect(plan("9am-6pm").times[0]).toBe("06:00");
+    expect(plan("9am-6pm", 1).times[0]).toBe("05:00");
+    expect(plan("9am-6pm", 1.5).times[0]).toBe("05:30");
+    expect(plan("9am-6pm", 5).times[0]).toBe("09:00");
+  });
+
+  it("chains a 9-to-6 day into three warmups", () => {
+    expect(plan("9am-6pm").times).toEqual(["06:00", "11:05", "16:10"]);
+  });
+
+  it("hands over just past each window expiry, not on it", () => {
+    const times = plan("9am-6pm").times;
+    // 06:00 + 5h = 11:00, so the next warmup must be strictly later.
+    expect(times[1]).toBe("11:05");
+    expect(times[2]).toBe("16:10");
+  });
+
+  it("stops once another window would start after the workday ends", () => {
+    expect(plan("9:00-12:00").times).toEqual(["06:00", "11:05"]);
+    expect(plan("9:00-10:00").times).toEqual(["06:00"]);
+  });
+
+  it("accepts a range written with a dash, an en dash, or the word to", () => {
+    const expected = ["06:00", "11:05", "16:10"];
+    expect(plan("9:00-18:00").times).toEqual(expected);
+    expect(plan("9:00 - 18:00").times).toEqual(expected);
+    expect(plan("9:00–18:00").times).toEqual(expected);
+    expect(plan("9am to 6pm").times).toEqual(expected);
+    expect(plan("9am until 6pm").times).toEqual(expected);
+  });
+
+  it("accepts bare hours on a 24-hour clock", () => {
+    expect(plan("9-18").times).toEqual(["06:00", "11:05", "16:10"]);
+  });
+
+  it("reads a bare end hour as the afternoon rather than overnight", () => {
+    // "9-6" means 09:00-18:00, the same day.
+    const result = plan("9-6");
+    expect(result.startLabel).toBe("09:00");
+    expect(result.endLabel).toBe("18:00");
+    expect(result.overnight).toBe(false);
+    expect(result.times).toEqual(["06:00", "11:05", "16:10"]);
+  });
+
+  it("still treats a genuinely overnight bare range as overnight", () => {
+    // 6pm cannot follow 21:00, so this stays an overnight shift.
+    const result = plan("21-6");
+    expect(result.overnight).toBe(true);
+    expect(result.startLabel).toBe("21:00");
+    expect(result.endLabel).toBe("06:00");
+  });
+
+  it("mixes a bare hour with a meridiem time", () => {
+    expect(plan("9-6pm").times).toEqual(["06:00", "11:05", "16:10"]);
+  });
+
+  it("reports the interpreted workday back", () => {
+    const result = plan("9am-6pm", 1.5);
+    expect(result.startLabel).toBe("09:00");
+    expect(result.endLabel).toBe("18:00");
+    expect(result.leadHours).toBe(1.5);
+    expect(result.overnight).toBe(false);
+  });
+
+  it("treats an end at or before the start as an overnight shift", () => {
+    const result = plan("9pm-6am");
+    expect(result.overnight).toBe(true);
+    expect(result.startLabel).toBe("21:00");
+    expect(result.endLabel).toBe("06:00");
+    expect(result.times[0]).toBe("18:00");
+  });
+
+  it("caps the number of warmups for an implausibly long day", () => {
+    const result = planWorkday("00:00-23:59", 5, now);
+    if (typeof result === "string") throw new Error(result);
+    expect(result.times.length).toBeLessThanOrEqual(8);
+  });
+
+  it("rejects a range it cannot split", () => {
+    expect(planWorkday("9am", 2, now)).toContain("Could not read a start and end time");
+  });
+
+  it("rejects an unparseable side of the range", () => {
+    expect(planWorkday("breakfast-6pm", 2, now)).toContain("Could not parse workday time");
+  });
+
+  it("rejects lead hours outside a single session", () => {
+    expect(planWorkday("9am-6pm", 0, now)).toContain("Lead hours must be between");
+    expect(planWorkday("9am-6pm", 6, now)).toContain("Lead hours must be between");
+  });
+});
+
+// Rejected before any DB write, so no database is needed.
+describe("addWorkdaySchedule validation", () => {
+  it("passes the planner's error through", () => {
+    expect(addWorkdaySchedule("9am", 2)).toContain("Could not read a start and end time");
   });
 });

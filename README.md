@@ -20,6 +20,7 @@ This bot starts sessions while you sleep. Schedule `/schedule tomorrow 9am` and 
 | `/schedules`                   | List pending scheduled warmups                                                   |
 | `/cancel <id>`                 | Cancel a scheduled warmup                                                        |
 | `/daily <time[, time...]> [hours]` | Schedule daily warmups. At each `<time>`, you'll have `[hours]` remaining   |
+| `/workday <start>-<end> [lead]` | Plan a day's warmups around your working hours (`[lead]` hours left at `<start>`, default: 2) |
 | `/dailies`                     | List daily scheduled warmups                                                     |
 | `/cancel_daily <id>`           | Cancel a daily scheduled warmup                                                  |
 | `/history`                     | Show recent session history                                                      |
@@ -42,6 +43,8 @@ This bot starts sessions while you sleep. Schedule `/schedule tomorrow 9am` and 
 /daily 7:00 AM 5h             # warm up every day at 7:00am
 /daily 9:00 AM 2h             # warm up every day at 6:00am
 /daily 7:00, 13:00, 18:00 5h  # warm up three times a day
+/workday 9am-6pm              # plan a 9-to-6 day (warmups at 06:00, 11:05, 16:10)
+/workday 9:00-18:00 1.5h      # same day, 1.5h left on the clock at 9:00
 ```
 
 The bot computes: `warmup_time = target - (5h - hours_remaining)`.
@@ -51,6 +54,34 @@ times share the same `[hours]` value, and the whole group is one ID — `/dailie
 lists it on a single line and `/cancel_daily <id>` cancels every time in it. The
 bot always arms a timer for the soonest upcoming time, then re-arms for the next
 one after each warmup.
+
+### Working hours
+
+`/workday` plans a whole day for you instead of making you pick times by hand:
+
+```
+/workday 9am-6pm
+→ Warmups: 06:00, 11:05, 16:10 (3 per day)
+```
+
+It works backwards from two facts about the 5-hour window. First, a window
+opened by a `"ready"` prompt has essentially untouched quota, so the best state
+to start work in is a window that is *already running* with a couple of hours
+left — you spend that quota on your first stretch of work, and the next reset
+lands inside your day rather than after it. `[lead]` is how much of that window
+is left when you clock in (default 2h), so the first warmup goes at
+`start - (5h - lead)`.
+
+Second, each later warmup has to land *just past* the previous window's expiry.
+A warmup fired exactly on the boundary lands inside the window that is still
+live — it opens nothing and is silently wasted — so `/workday` adds a 5-minute
+handover margin and keeps chaining until another window would start after your
+day ends.
+
+For a 9-to-6 day that yields three separate quota allowances covering 8.8 of
+your 9 working hours, versus two if you simply warm up at 9:00. Ranges can be
+written `9am-6pm`, `9:00-18:00`, `9-18`, `9-6`, or `9am to 6pm`; overnight
+shifts (`21:00-06:00`) work too.
 
 ## How it works
 

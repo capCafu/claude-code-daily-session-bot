@@ -175,6 +175,123 @@ export function addDailySchedule(
   return schedule;
 }
 
+// A workday is covered by chaining 5-hour windows. The first warmup is placed so
+// that `leadHours` of an already-running window remain when the workday starts —
+// that window was opened by a trivial "ready" prompt, so its quota is untouched
+// and gets spent on the first stretch of work. Each later warmup sits just past
+// the previous window's expiry; without that margin it would land inside the
+// still-live window and open nothing at all.
+const WINDOW_HANDOVER_MARGIN_MS = 5 * 60 * 1000;
+const MAX_WORKDAY_WARMUPS = 8;
+const SESSION_HOURS = SESSION_DURATION_MS / 3_600_000;
+
+const WORKDAY_RANGE = /^\s*(.+?)\s*(?:-|–|—|\bto\b|\buntil\b)\s*(.+?)\s*$/i;
+
+const timeOfDayFmt = new Intl.DateTimeFormat("en-GB", {
+  timeZone: TIMEZONE,
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+export interface WorkdayPlan {
+  startLabel: string;
+  endLabel: string;
+  leadHours: number;
+  overnight: boolean;
+  times: string[];
+}
+
+const WORKDAY_HINT = "Try: \`/workday 9am-6pm\` or \`/workday 9:00-18:00 1.5h\`";
+
+// Bare hours are common shorthand, but chrono needs a colon: "9-18" -> "9:00-18:00".
+// When both sides are bare, an end that is not after the start reads as the
+// afternoon rather than as an overnight shift, so "9-6" means 09:00-18:00.
+function normalizeWorkdayTimes(startInput: string, endInput: string): [string, string] {
+  const isBareHour = (input: string) => /^\d{1,2}$/.test(input);
+  if (!isBareHour(startInput) && !isBareHour(endInput)) {
+    return [startInput, endInput];
+  }
+
+  let start = startInput;
+  let end = endInput;
+
+  if (isBareHour(start) && isBareHour(end)) {
+    const startHour = parseInt(start, 10);
+    let endHour = parseInt(end, 10);
+    if (endHour <= startHour && endHour + 12 > startHour && endHour + 12 <= 23) {
+      endHour += 12;
+    }
+    return [`${startHour}:00`, `${endHour}:00`];
+  }
+
+  if (isBareHour(start)) start = `${start}:00`;
+  if (isBareHour(end)) end = `${end}:00`;
+  return [start, end];
+}
+
+export function planWorkday(
+  workdayInput: string,
+  leadHours: number,
+  now = new Date()
+): WorkdayPlan | string {
+  const range = workdayInput.match(WORKDAY_RANGE);
+  if (!range) {
+    return `Could not read a start and end time from \`${workdayInput}\`. ${WORKDAY_HINT}`;
+  }
+
+  if (leadHours <= 0 || leadHours > SESSION_HOURS) {
+    return `Lead hours must be between 0.5 and ${SESSION_HOURS}. ${WORKDAY_HINT}`;
+  }
+
+  const [startInput, endInput] = normalizeWorkdayTimes(range[1], range[2]);
+  const parse = (input: string) =>
+    chrono.parseDate(input, { instant: now, timezone: TIMEZONE });
+  const start = parse(startInput);
+  const end = parse(endInput);
+  if (!start || !end) {
+    const bad = [!start ? range[1] : undefined, !end ? range[2] : undefined].filter(Boolean);
+    return `Could not parse workday ${bad.length === 1 ? "time" : "times"}: ${bad.join(", ")}. ${WORKDAY_HINT}`;
+  }
+
+  // An end at or before the start means an overnight shift, so roll it forward.
+  const overnight = end.getTime() <= start.getTime();
+  const endTime = overnight ? end.getTime() + 24 * 60 * 60 * 1000 : end.getTime();
+
+  const warmups: Date[] = [calculateWarmupAt(start, leadHours)];
+  while (warmups.length < MAX_WORKDAY_WARMUPS) {
+    const previous = warmups[warmups.length - 1];
+    const next = new Date(
+      previous.getTime() + SESSION_DURATION_MS + WINDOW_HANDOVER_MARGIN_MS
+    );
+    if (next.getTime() >= endTime) break;
+    warmups.push(next);
+  }
+
+  return {
+    startLabel: timeOfDayFmt.format(start),
+    endLabel: timeOfDayFmt.format(new Date(endTime)),
+    leadHours,
+    overnight,
+    times: warmups.map((w) => timeOfDayFmt.format(w)),
+  };
+}
+
+export function addWorkdaySchedule(
+  workdayInput: string,
+  leadHours: number
+): { schedule: DailySchedule; plan: WorkdayPlan } | string {
+  const plan = planWorkday(workdayInput, leadHours);
+  if (typeof plan === "string") return plan;
+
+  // The planned times are absolute warmup times, so the schedule wants a full
+  // window remaining at each one: warmup_at === the time itself.
+  const schedule = addDailySchedule(plan.times.join(", "), SESSION_HOURS);
+  if (typeof schedule === "string") return schedule;
+
+  return { schedule, plan };
+}
+
 export function cancelSchedule(id: number): boolean {
   const timer = timers.get(id);
   if (timer) {
