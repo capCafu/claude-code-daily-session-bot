@@ -32,7 +32,7 @@ export function initDb(path?: string): void {
 
     CREATE TABLE IF NOT EXISTS daily_schedules (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      time_of_day TEXT NOT NULL,
+      times_of_day TEXT NOT NULL,
       hours_remaining REAL NOT NULL,
       target_datetime TEXT NOT NULL,
       warmup_at TEXT NOT NULL,
@@ -40,6 +40,20 @@ export function initDb(path?: string): void {
       last_fired_at TEXT
     );
   `);
+
+  migrateDailySchedules();
+}
+
+// Daily schedules used to hold a single `time_of_day`; they now hold a
+// comma-separated list, so existing rows only need the column renamed.
+function migrateDailySchedules(): void {
+  const columns = db.prepare("PRAGMA table_info(daily_schedules)").all() as { name: string }[];
+  const hasLegacyColumn = columns.some((c) => c.name === "time_of_day");
+  const hasCurrentColumn = columns.some((c) => c.name === "times_of_day");
+
+  if (hasLegacyColumn && !hasCurrentColumn) {
+    db.exec("ALTER TABLE daily_schedules RENAME COLUMN time_of_day TO times_of_day");
+  }
 }
 
 export function insertSession(
@@ -114,17 +128,17 @@ export function deleteSchedule(id: number): boolean {
 }
 
 export function insertDailySchedule(
-  timeOfDay: string,
+  timesOfDay: string,
   hoursRemaining: number,
   targetDatetime: string,
   warmupAt: string
 ): DailySchedule {
   const stmt = db.prepare(`
-    INSERT INTO daily_schedules (time_of_day, hours_remaining, target_datetime, warmup_at, created_at)
+    INSERT INTO daily_schedules (times_of_day, hours_remaining, target_datetime, warmup_at, created_at)
     VALUES (?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
-    timeOfDay,
+    timesOfDay,
     hoursRemaining,
     targetDatetime,
     warmupAt,

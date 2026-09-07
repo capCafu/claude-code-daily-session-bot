@@ -8,7 +8,13 @@ import {
   getDailySchedules,
 } from "./db";
 import { warmup } from "./warmup";
-import { addDailySchedule, addSchedule, cancelDailySchedule, cancelSchedule } from "./scheduler";
+import {
+  addDailySchedule,
+  addSchedule,
+  cancelDailySchedule,
+  cancelSchedule,
+  parseTimesOfDay,
+} from "./scheduler";
 
 const fmt = new Intl.DateTimeFormat("en-GB", {
   timeZone: TIMEZONE,
@@ -54,7 +60,7 @@ export function createBot(token: string): TelegramBot {
       `\`/session\` — Show active session info`,
       `\`/schedule\` \`<datetime>\` \`[hours]\` — Schedule a warmup`,
       `\`/schedules\` — List pending schedules`,
-      `\`/daily\` \`<time>\` \`[hours]\` — Schedule a daily warmup`,
+      `\`/daily\` \`<time[, time...]>\` \`[hours]\` — Schedule daily warmups`,
       `\`/dailies\` — List daily schedules`,
       `\`/cancel_daily\` \`<id>\` — Cancel a daily schedule`,
       `\`/cancel\` \`<id>\` — Cancel a schedule`,
@@ -66,6 +72,7 @@ export function createBot(token: string): TelegramBot {
       `/schedule monday 14:00 3h`,
       `/schedule jan 30 8:00 4h`,
       `/daily 7:29 AM 5h`,
+      `/daily 7:00, 13:00, 18:00 5h`,
     ];
     bot.sendMessage(msg.chat.id, text.join("\n"), { parse_mode: "Markdown" });
   });
@@ -162,9 +169,11 @@ export function createBot(token: string): TelegramBot {
       return;
     }
 
+    const perDay = parseTimesOfDay(result.times_of_day).length;
     const lines = [
       `Daily schedule created (ID: ${result.id})`,
-      `Target: every day at *${result.time_of_day}* with *${hours}h* remaining`,
+      `Target: every day at *${result.times_of_day}* with *${hours}h* remaining`,
+      ...(perDay > 1 ? [`${perDay} warmups per day`] : []),
       `Next warmup at: *${fmt.format(new Date(result.warmup_at))}*`,
     ];
     bot.sendMessage(msg.chat.id, lines.join("\n"), { parse_mode: "Markdown" });
@@ -179,7 +188,7 @@ export function createBot(token: string): TelegramBot {
     }
     const lines = daily.map(
       (s) =>
-        `ID ${s.id}: every day at ${s.time_of_day} (${s.hours_remaining}h remaining), next warmup at ${fmt.format(new Date(s.warmup_at))}`
+        `ID ${s.id}: every day at ${s.times_of_day} (${s.hours_remaining}h remaining), next warmup at ${fmt.format(new Date(s.warmup_at))}`
     );
     bot.sendMessage(msg.chat.id, lines.join("\n"));
   });

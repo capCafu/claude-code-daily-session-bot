@@ -21,7 +21,8 @@ export interface Schedule {
 
 export interface DailySchedule {
   id: number;
-  time_of_day: string;
+  /** Comma-separated times of day, e.g. `"7:29 AM, 1:00 PM"`. */
+  times_of_day: string;
   hours_remaining: number;
   target_datetime: string;
   warmup_at: string;

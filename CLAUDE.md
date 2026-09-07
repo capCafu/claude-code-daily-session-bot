@@ -41,4 +41,6 @@ See [README.md](README.md) for full usage details.
 - Auth: only Telegram user IDs in `TELEGRAM_ALLOWED_USER_IDS` can use commands
 - Date parsing via chrono-node (natural language: "tomorrow 9am", "jan 30 8:00")
 - Daily schedules reschedule themselves after each warmup
+- A daily schedule holds one or more times of day in `daily_schedules.times_of_day` (comma-separated, e.g. `"7:00 AM, 1:00 PM"`); `target_datetime`/`warmup_at` always track the soonest upcoming one, re-armed after each fire
+- `db.ts` migrates the pre-multi-time column (`time_of_day` → `times_of_day`) in place on startup
 - Requires `claude` CLI installed and authenticated on host; Docker mounts ignored Claude credentials from `data/claude-home`

@@ -73,11 +73,31 @@ export function addSchedule(targetDatetime: Date, hoursRemaining: number): Sched
   return schedule;
 }
 
-export function calculateNextDailyOccurrence(
+export interface DailyOccurrence {
+  targetDatetime: Date;
+  warmupAt: Date;
+}
+
+/** Splits `"7:29 AM, 13:00"` into individual times, trimmed and deduplicated. */
+export function parseTimesOfDay(input: string): string[] {
+  const seen = new Set<string>();
+  const times: string[] = [];
+
+  for (const part of input.split(",")) {
+    const timeOfDay = part.trim();
+    if (!timeOfDay || seen.has(timeOfDay.toLowerCase())) continue;
+    seen.add(timeOfDay.toLowerCase());
+    times.push(timeOfDay);
+  }
+
+  return times;
+}
+
+export function nextOccurrenceForTime(
   timeOfDay: string,
   hoursRemaining: number,
   now = new Date()
-): { targetDatetime: Date; warmupAt: Date } | undefined {
+): DailyOccurrence | undefined {
   for (let dayOffset = 0; dayOffset < 8; dayOffset++) {
     const instant = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
     const targetDatetime = chrono.parseDate(
@@ -99,17 +119,53 @@ export function calculateNextDailyOccurrence(
   return undefined;
 }
 
+// A daily schedule can hold several times of day; the soonest upcoming warmup
+// across all of them drives the timer. Unparseable times are skipped so one bad
+// entry in a stored row cannot stall the rest of the schedule.
+export function calculateNextDailyOccurrence(
+  timesOfDay: string | string[],
+  hoursRemaining: number,
+  now = new Date()
+): DailyOccurrence | undefined {
+  const times = Array.isArray(timesOfDay) ? timesOfDay : parseTimesOfDay(timesOfDay);
+  let earliest: DailyOccurrence | undefined;
+
+  for (const timeOfDay of times) {
+    const occurrence = nextOccurrenceForTime(timeOfDay, hoursRemaining, now);
+    if (!occurrence) continue;
+    if (!earliest || occurrence.warmupAt.getTime() < earliest.warmupAt.getTime()) {
+      earliest = occurrence;
+    }
+  }
+
+  return earliest;
+}
+
+const DAILY_TIME_HINT = "Try: \`7:29 AM\`, \`07:29, 13:00\`, or \`19:29\`";
+
 export function addDailySchedule(
-  timeOfDay: string,
+  timesInput: string,
   hoursRemaining: number
 ): DailySchedule | string {
-  const next = calculateNextDailyOccurrence(timeOfDay, hoursRemaining);
+  const times = parseTimesOfDay(timesInput);
+  if (times.length === 0) {
+    return `No daily times given. ${DAILY_TIME_HINT}`;
+  }
+
+  const now = new Date();
+  const invalid = times.filter((timeOfDay) => !nextOccurrenceForTime(timeOfDay, hoursRemaining, now));
+  if (invalid.length > 0) {
+    const label = invalid.length === 1 ? "time" : "times";
+    return `Could not parse daily ${label}: ${invalid.join(", ")}. ${DAILY_TIME_HINT}`;
+  }
+
+  const next = calculateNextDailyOccurrence(times, hoursRemaining, now);
   if (!next) {
-    return `Could not parse daily time. Try: \`7:29 AM\`, \`07:29\`, or \`19:29\``;
+    return `Could not parse daily times. ${DAILY_TIME_HINT}`;
   }
 
   const schedule = insertDailySchedule(
-    timeOfDay,
+    times.join(", "),
     hoursRemaining,
     next.targetDatetime.toISOString(),
     next.warmupAt.toISOString()
@@ -158,7 +214,7 @@ function setDailyTimer(schedule: DailySchedule): void {
 
   if (delay <= 0) {
     const next = calculateNextDailyOccurrence(
-      nextSchedule.time_of_day,
+      nextSchedule.times_of_day,
       nextSchedule.hours_remaining
     );
     if (!next) return;
@@ -181,7 +237,7 @@ function setDailyTimer(schedule: DailySchedule): void {
 
     const { result } = await warmup();
     const next = calculateNextDailyOccurrence(
-      nextSchedule.time_of_day,
+      nextSchedule.times_of_day,
       nextSchedule.hours_remaining
     );
     const updated = next

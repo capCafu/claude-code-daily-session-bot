@@ -13,6 +13,10 @@ import {
   updateDailyScheduleNext,
   deleteDailySchedule,
 } from "./db";
+import Database from "better-sqlite3";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 
 beforeEach(() => {
   initDb(":memory:");
@@ -135,7 +139,7 @@ describe("daily schedules", () => {
   it("insertDailySchedule returns schedule with all fields", () => {
     const s = insertDailySchedule("7:29 AM", 5, target, warmup);
     expect(s.id).toBeDefined();
-    expect(s.time_of_day).toBe("7:29 AM");
+    expect(s.times_of_day).toBe("7:29 AM");
     expect(s.hours_remaining).toBe(5);
     expect(s.target_datetime).toBe(target);
     expect(s.warmup_at).toBe(warmup);
@@ -148,7 +152,7 @@ describe("daily schedules", () => {
 
     const daily = getDailySchedules();
 
-    expect(daily.map((s) => s.time_of_day)).toEqual(["7:29 AM", "10:00"]);
+    expect(daily.map((s) => s.times_of_day)).toEqual(["7:29 AM", "10:00"]);
   });
 
   it("updateDailyScheduleNext updates next occurrence and last fired time", () => {
@@ -172,5 +176,63 @@ describe("daily schedules", () => {
 
   it("deleteDailySchedule returns false for non-existent id", () => {
     expect(deleteDailySchedule(999)).toBe(false);
+  });
+
+  it("stores several times of day on one schedule", () => {
+    const s = insertDailySchedule("07:00, 13:00, 18:00", 5, target, warmup);
+
+    expect(getDailySchedules()[0].times_of_day).toBe("07:00, 13:00, 18:00");
+    expect(s.times_of_day).toBe("07:00, 13:00, 18:00");
+  });
+});
+
+describe("daily schedule migration", () => {
+  let dir: string;
+  let dbPath: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "session-bot-test-"));
+    dbPath = join(dir, "legacy.db");
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("renames a legacy time_of_day column, preserving existing rows", () => {
+    const legacy = new Database(dbPath);
+    legacy.exec(`
+      CREATE TABLE daily_schedules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        time_of_day TEXT NOT NULL,
+        hours_remaining REAL NOT NULL,
+        target_datetime TEXT NOT NULL,
+        warmup_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        last_fired_at TEXT
+      );
+    `);
+    legacy
+      .prepare(
+        `INSERT INTO daily_schedules (time_of_day, hours_remaining, target_datetime, warmup_at, created_at)
+         VALUES ('7:00 AM', 5, '2026-09-07T22:00:00.000Z', '2026-09-07T22:00:00.000Z', '2026-06-25T00:18:41.696Z')`
+      )
+      .run();
+    legacy.close();
+
+    initDb(dbPath);
+    const daily = getDailySchedules();
+
+    expect(daily).toHaveLength(1);
+    expect(daily[0].times_of_day).toBe("7:00 AM");
+    expect(daily[0].hours_remaining).toBe(5);
+  });
+
+  it("is a no-op on a fresh database", () => {
+    initDb(dbPath);
+    initDb(dbPath);
+
+    const s = insertDailySchedule("07:00, 13:00", 5, "2026-09-07T22:00:00.000Z", "2026-09-07T22:00:00.000Z");
+    expect(s.times_of_day).toBe("07:00, 13:00");
   });
 });

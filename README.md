@@ -19,7 +19,7 @@ This bot starts sessions while you sleep. Schedule `/schedule tomorrow 9am` and 
 | `/schedule <datetime> [hours]` | Schedule a warmup. At `<datetime>`, you'll have `[hours]` remaining (default: 2) |
 | `/schedules`                   | List pending scheduled warmups                                                   |
 | `/cancel <id>`                 | Cancel a scheduled warmup                                                        |
-| `/daily <time> [hours]`        | Schedule a daily warmup. At `<time>`, you'll have `[hours]` remaining            |
+| `/daily <time[, time...]> [hours]` | Schedule daily warmups. At each `<time>`, you'll have `[hours]` remaining   |
 | `/dailies`                     | List daily scheduled warmups                                                     |
 | `/cancel_daily <id>`           | Cancel a daily scheduled warmup                                                  |
 | `/history`                     | Show recent session history                                                      |
@@ -41,9 +41,16 @@ This bot starts sessions while you sleep. Schedule `/schedule tomorrow 9am` and 
 /schedule jan 30 8:00 4h      # 4h remaining at 8:00 → warmup at 7:00
 /daily 7:00 AM 5h             # warm up every day at 7:00am
 /daily 9:00 AM 2h             # warm up every day at 6:00am
+/daily 7:00, 13:00, 18:00 5h  # warm up three times a day
 ```
 
 The bot computes: `warmup_time = target - (5h - hours_remaining)`.
+
+A daily schedule can hold several times of day, separated by commas. All of its
+times share the same `[hours]` value, and the whole group is one ID — `/dailies`
+lists it on a single line and `/cancel_daily <id>` cancels every time in it. The
+bot always arms a timer for the soonest upcoming time, then re-arms for the next
+one after each warmup.
 
 ## How it works
 
