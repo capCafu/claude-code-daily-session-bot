@@ -6,4 +6,9 @@ services:
       - ./data:/data
       - ./data/claude-home/.claude:/root/.claude
       - ./data/claude-home/.claude.json:/root/.claude.json
+    # The default resolver answers api.telegram.org with an IPv6 address only,
+    # which this container has no route to. These return the IPv4 address.
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     restart: unless-stopped
