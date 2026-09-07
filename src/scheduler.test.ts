@@ -5,7 +5,7 @@ import {
   calculateNextDailyOccurrence,
   calculateWarmupAt,
   parseTimesOfDay,
-  planStaggeredWorkday,
+  planWorkdayForAccounts,
   planWorkday,
 } from "./scheduler";
 
@@ -285,10 +285,10 @@ describe("addWorkdaySchedules validation", () => {
   });
 });
 
-describe("planStaggeredWorkday", () => {
+describe("planWorkdayForAccounts (staggered)", () => {
   const now = new Date("2025-01-15T00:00:00.000Z");
   const stagger = (accounts: string[], input = "9am-6pm", lead = 2) => {
-    const result = planStaggeredWorkday(input, lead, accounts, now);
+    const result = planWorkdayForAccounts(input, lead, accounts, now, true);
     if (typeof result === "string") throw new Error(`unexpected error: ${result}`);
     return result;
   };
@@ -349,12 +349,53 @@ describe("planStaggeredWorkday", () => {
   });
 
   it("passes a planning error straight through", () => {
-    expect(planStaggeredWorkday("breakfast-6pm", 2, ["work"], now)).toContain(
+    expect(planWorkdayForAccounts("breakfast-6pm", 2, ["work"], now, true)).toContain(
       "Could not parse workday time"
     );
   });
 
   it("rejects an empty account list", () => {
-    expect(planStaggeredWorkday("9am-6pm", 2, [], now)).toContain("No accounts");
+    expect(planWorkdayForAccounts("9am-6pm", 2, [], now, true)).toContain("No accounts");
+  });
+});
+
+describe("planWorkdayForAccounts (aligned, the default)", () => {
+  const now = new Date("2025-01-15T00:00:00.000Z");
+  const aligned = (accounts: string[], input = "9am-6pm", lead = 2) => {
+    const result = planWorkdayForAccounts(input, lead, accounts, now);
+    if (typeof result === "string") throw new Error(`unexpected error: ${result}`);
+    return result;
+  };
+
+  it("gives every account the same times", () => {
+    const { perAccount } = aligned(["work", "personal"]);
+    expect(perAccount).toEqual([
+      { account: "work", times: ["06:00", "11:05", "16:10"] },
+      { account: "personal", times: ["06:00", "11:05", "16:10"] },
+    ]);
+  });
+
+  it("matches the single-account plan for every account", () => {
+    const one = aligned(["work"]).perAccount[0].times;
+    for (const entry of aligned(["work", "personal", "third"]).perAccount) {
+      expect(entry.times).toEqual(one);
+    }
+  });
+
+  it("is unchanged by the number of accounts", () => {
+    expect(aligned(["a", "b", "c", "d"]).perAccount.every((e) => e.times[0] === "06:00")).toBe(
+      true
+    );
+  });
+
+  it("still honours the lead hours", () => {
+    expect(aligned(["work", "personal"], "9am-6pm", 1).perAccount[1].times[0]).toBe("05:00");
+  });
+
+  it("differs from the staggered plan for more than one account", () => {
+    const alignedTimes = aligned(["work", "personal"]).perAccount[1].times;
+    const staggeredResult = planWorkdayForAccounts("9am-6pm", 2, ["work", "personal"], now, true);
+    if (typeof staggeredResult === "string") throw new Error(staggeredResult);
+    expect(staggeredResult.perAccount[1].times).not.toEqual(alignedTimes);
   });
 });

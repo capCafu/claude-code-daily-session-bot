@@ -24,6 +24,12 @@ export const DEFAULT_ACCOUNT_NAME = "default";
 /** Addresses every account at once in a command. */
 export const ALL_ACCOUNTS_TOKEN = "all";
 
+/** Opts a multi-account `/workday` into offset windows. */
+export const STAGGER_TOKEN = "stagger";
+
+/** Command keywords an account name would shadow. */
+const RESERVED_NAMES = new Set([ALL_ACCOUNTS_TOKEN, STAGGER_TOKEN]);
+
 export const ACCOUNTS_DIR = process.env.CLAUDE_ACCOUNTS_DIR ?? "data/accounts";
 
 const ACCOUNT_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
@@ -59,8 +65,8 @@ export function parseAccounts(
     if (!ACCOUNT_NAME_PATTERN.test(name)) {
       return `Invalid account name \`${name}\` in CLAUDE_ACCOUNTS. Use letters, digits, dashes or underscores, e.g. \`work,personal\`.`;
     }
-    if (name === ALL_ACCOUNTS_TOKEN) {
-      return `Account name \`${ALL_ACCOUNTS_TOKEN}\` is reserved; it addresses every account at once.`;
+    if (RESERVED_NAMES.has(name)) {
+      return `Account name \`${name}\` is reserved as a command keyword.`;
     }
     if (HOURS_LIKE.test(name)) {
       return `Account name \`${name}\` looks like an hours argument; pick a name that is not a number.`;

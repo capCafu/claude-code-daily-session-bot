@@ -78,8 +78,9 @@ describe("accounts", () => {
     expect(parseAccounts("work,work", "/d")).toContain("Duplicate account");
   });
 
-  it("rejects the reserved name used to address every account", () => {
+  it("rejects names that shadow a command keyword", () => {
     expect(parseAccounts("all,work", "/d")).toContain("reserved");
+    expect(parseAccounts("stagger,work", "/d")).toContain("reserved");
   });
 
   it("rejects a name that would be read as an hours argument", () => {

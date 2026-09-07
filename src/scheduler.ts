@@ -298,22 +298,26 @@ export interface AccountWorkdayPlan {
 }
 
 /**
- * Spreads a workday across several accounts. Each extra account is offset by an
- * even fraction of a session, so their windows do not all reset at the same
- * moment: with two accounts a fresh window arrives every 2.5 hours instead of
- * every 5. A single account is simply the unstaggered plan.
+ * Plans a workday for several accounts.
+ *
+ * Aligned (the default), every account shares the same warmup times, so each
+ * window carries the combined quota of all accounts. Staggered, each extra
+ * account is offset by an even fraction of a session so the windows do not all
+ * reset at the same moment: with two accounts a fresh window arrives every 2.5
+ * hours instead of every 5. A single account is the same either way.
  */
-export function planStaggeredWorkday(
+export function planWorkdayForAccounts(
   workdayInput: string,
   leadHours: number,
   accountNames: string[],
-  now = new Date()
+  now = new Date(),
+  stagger = false
 ): { plan: WorkdayPlan; perAccount: AccountWorkdayPlan[] } | string {
   if (accountNames.length === 0) {
     return "No accounts to schedule.";
   }
 
-  const stride = SESSION_DURATION_MS / accountNames.length;
+  const stride = stagger ? SESSION_DURATION_MS / accountNames.length : 0;
   const perAccount: AccountWorkdayPlan[] = [];
   let firstPlan: WorkdayPlan | undefined;
 
@@ -330,13 +334,30 @@ export function planStaggeredWorkday(
 export function addWorkdaySchedules(
   workdayInput: string,
   leadHours: number,
-  accountNames: string[]
-): { plan: WorkdayPlan; created: DailySchedule[] } | string {
-  const staggered = planStaggeredWorkday(workdayInput, leadHours, accountNames);
-  if (typeof staggered === "string") return staggered;
+  accountNames: string[],
+  stagger = false
+): { plan: WorkdayPlan; created: DailySchedule[]; replaced: number[] } | string {
+  const planned = planWorkdayForAccounts(
+    workdayInput,
+    leadHours,
+    accountNames,
+    new Date(),
+    stagger
+  );
+  if (typeof planned === "string") return planned;
+
+  // A workday plan supersedes whatever daily schedule the account already had.
+  // Without this, re-running the command leaves two plans firing the same
+  // warmup twice: the second spawn lands inside the window the first opened,
+  // does nothing, and still records a session row with the wrong expiry.
+  const replaced: number[] = [];
+  for (const existing of getDailySchedules()) {
+    if (!accountNames.includes(existing.account)) continue;
+    if (cancelDailySchedule(existing.id)) replaced.push(existing.id);
+  }
 
   const created: DailySchedule[] = [];
-  for (const { account, times } of staggered.perAccount) {
+  for (const { account, times } of planned.perAccount) {
     // An offset account can have no warmup left inside a short workday.
     if (times.length === 0) continue;
     const schedule = addDailySchedule(times.join(", "), SESSION_HOURS, account);
@@ -348,7 +369,7 @@ export function addWorkdaySchedules(
     return "That workday is too short to fit a warmup for any account.";
   }
 
-  return { plan: staggered.plan, created };
+  return { plan: planned.plan, created, replaced };
 }
 
 export function cancelSchedule(id: number): boolean {

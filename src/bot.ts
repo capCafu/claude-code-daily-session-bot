@@ -7,6 +7,7 @@ import {
   ALL_ACCOUNTS_TOKEN,
   IS_MULTI_ACCOUNT,
   PRIMARY_ACCOUNT,
+  STAGGER_TOKEN,
   TIMEZONE,
   findAccount,
 } from "./config";
@@ -71,6 +72,15 @@ export function resolveAccounts(
   return account ? [account] : unknownAccount(selector);
 }
 
+/** Strips a trailing `stagger` keyword, which opts a workday into offset windows. */
+export function parseStaggerToken(input: string): { rest: string; stagger: boolean } {
+  const parts = input.trim().split(/\s+/);
+  if (parts.length >= 2 && parts[parts.length - 1].toLowerCase() === STAGGER_TOKEN) {
+    return { rest: parts.slice(0, -1).join(" "), stagger: true };
+  }
+  return { rest: input.trim(), stagger: false };
+}
+
 /**
  * Splits a trailing account name off a longer argument, so `9am-6pm work` and
  * `7:00, 13:00 5h personal` both work. Only strips it when something else
@@ -118,7 +128,7 @@ export function createBot(token: string): TelegramBot {
       `\`/schedule\` \`<datetime>\` \`[hours]\` — Schedule a warmup`,
       `\`/schedules\` — List pending schedules`,
       `\`/daily\` \`<time[, time...]>\` \`[hours]\` — Schedule daily warmups`,
-      `\`/workday\` \`<start>-<end>\` \`[lead]\` — Plan warmups around your working hours`,
+      `\`/workday\` \`<start>-<end>\` \`[lead]\` \`[account]\` — Plan warmups around your working hours`,
       `\`/dailies\` — List daily schedules`,
       `\`/cancel_daily\` \`<id>\` — Cancel a daily schedule`,
       `\`/cancel\` \`<id>\` — Cancel a schedule`,
@@ -139,7 +149,8 @@ export function createBot(token: string): TelegramBot {
             `*Accounts*`,
             `Commands take an optional account name (\`${ACCOUNT_NAMES.join("`, `")}\`).`,
             `\`/warmup ${ACCOUNT_NAMES[1] ?? ALL_ACCOUNTS_TOKEN}\`, \`/warmup ${ALL_ACCOUNTS_TOKEN}\`, \`/workday 9am-6pm ${ACCOUNT_NAMES[0]}\``,
-            `\`/workday\` with no account staggers every account.`,
+            `\`/workday\` with no account plans every account on the same times;`,
+            `add \`${STAGGER_TOKEN}\` to offset them instead. Re-running replaces the old plan.`,
           ]
         : []),
     ];
@@ -308,9 +319,11 @@ export function createBot(token: string): TelegramBot {
 
   bot.onText(/\/workday (.+)/, (msg, match) => {
     if (!isAllowed(msg)) return;
-    const { rest, selector } = parseAccountToken(match![1].trim());
-    // With no account given, every account is planned and staggered.
-    const targets = resolveAccounts(selector, ACCOUNTS);
+    // Account name first, then the optional `stagger` keyword behind it.
+    const withAccount = parseAccountToken(match![1].trim());
+    const { rest, stagger } = parseStaggerToken(withAccount.rest);
+    // With no account given, every account is planned.
+    const targets = resolveAccounts(withAccount.selector, ACCOUNTS);
     if (typeof targets === "string") {
       bot.sendMessage(msg.chat.id, targets, { parse_mode: "Markdown" });
       return;
@@ -320,14 +333,15 @@ export function createBot(token: string): TelegramBot {
     const result = addWorkdaySchedules(
       dateStr,
       hours,
-      targets.map((a) => a.name)
+      targets.map((a) => a.name),
+      stagger
     );
     if (typeof result === "string") {
       bot.sendMessage(msg.chat.id, result, { parse_mode: "Markdown" });
       return;
     }
 
-    const { plan, created } = result;
+    const { plan, created, replaced } = result;
     const lines = [
       created.length > 1
         ? `Workday schedules created (IDs: ${created.map((c) => c.id).join(", ")})`
@@ -343,7 +357,16 @@ export function createBot(token: string): TelegramBot {
       );
     }
     if (created.length > 1) {
-      lines.push(`Accounts are offset so their windows do not reset together.`);
+      lines.push(
+        stagger
+          ? `Accounts are offset so their windows do not reset together.`
+          : `Both accounts share these times, so each window carries their combined quota.`
+      );
+    }
+    if (replaced.length > 0) {
+      lines.push(
+        `Replaced previous ${replaced.length === 1 ? "schedule" : "schedules"}: ID ${replaced.join(", ")}`
+      );
     }
     const soonest = created.reduce((a, b) => (a.warmup_at <= b.warmup_at ? a : b));
     lines.push(`Next warmup at: *${fmt.format(new Date(soonest.warmup_at))}*${created.length > 1 ? ` (${soonest.account})` : ""}`);

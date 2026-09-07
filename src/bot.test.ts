@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { fmtDuration, parseAccountToken, parseScheduleInput, resolveAccounts } from "./bot";
+import {
+  fmtDuration,
+  parseAccountToken,
+  parseScheduleInput,
+  parseStaggerToken,
+  resolveAccounts,
+} from "./bot";
 import { ACCOUNTS, DEFAULT_ACCOUNT_NAME, PRIMARY_ACCOUNT } from "./config";
 
 describe("fmtDuration", () => {
@@ -128,5 +134,37 @@ describe("resolveAccounts", () => {
 
   it("reports an unknown account rather than guessing", () => {
     expect(resolveAccounts("nope", [PRIMARY_ACCOUNT])).toContain("Unknown account");
+  });
+});
+
+describe("parseStaggerToken", () => {
+  it("strips a trailing stagger keyword", () => {
+    expect(parseStaggerToken("9am-6pm stagger")).toEqual({ rest: "9am-6pm", stagger: true });
+  });
+
+  it("is case-insensitive", () => {
+    expect(parseStaggerToken("9am-6pm STAGGER").stagger).toBe(true);
+  });
+
+  it("leaves the hours argument in place", () => {
+    expect(parseStaggerToken("9am-6pm 1.5h stagger")).toEqual({
+      rest: "9am-6pm 1.5h",
+      stagger: true,
+    });
+  });
+
+  it("defaults to aligned when the keyword is absent", () => {
+    expect(parseStaggerToken("9am-6pm")).toEqual({ rest: "9am-6pm", stagger: false });
+  });
+
+  it("never consumes a lone argument", () => {
+    expect(parseStaggerToken("stagger")).toEqual({ rest: "stagger", stagger: false });
+  });
+
+  it("composes with an account name stripped first", () => {
+    // "/workday 9am-6pm stagger all" -> account token taken, then the keyword.
+    const withAccount = parseAccountToken("9am-6pm stagger all", ["work", "personal"]);
+    expect(withAccount.selector).toBe("all");
+    expect(parseStaggerToken(withAccount.rest)).toEqual({ rest: "9am-6pm", stagger: true });
   });
 });
