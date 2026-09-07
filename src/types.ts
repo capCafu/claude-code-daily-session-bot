@@ -1,5 +1,6 @@
 export interface Session {
   id: number;
+  account: string;
   session_id: string;
   started_at: string;
   expires_at: string;
@@ -12,6 +13,7 @@ export interface Session {
 
 export interface Schedule {
   id: number;
+  account: string;
   target_datetime: string;
   hours_remaining: number;
   warmup_at: string;
@@ -21,6 +23,7 @@ export interface Schedule {
 
 export interface DailySchedule {
   id: number;
+  account: string;
   /** Comma-separated times of day, e.g. `"7:29 AM, 1:00 PM"`. */
   times_of_day: string;
   hours_remaining: number;

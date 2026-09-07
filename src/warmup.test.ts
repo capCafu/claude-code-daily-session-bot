@@ -37,35 +37,35 @@ describe("parseWarmupOutput", () => {
       cost_usd: 0.05,
     });
 
-    expect(sessionArgs[0]).toBe("sess_123"); // session_id
-    expect(sessionArgs[1]).toBe("2025-01-15T10:00:00.000Z"); // started_at
-    expect(sessionArgs[2]).toBe("2025-01-15T15:00:00.000Z"); // expires_at (5h later)
-    expect(sessionArgs[3]).toBe(100); // input_tokens
-    expect(sessionArgs[4]).toBe(50); // output_tokens
-    expect(sessionArgs[5]).toBe(10); // cache_creation_tokens
-    expect(sessionArgs[6]).toBe(5); // cache_read_tokens
-    expect(sessionArgs[7]).toBe(0.05); // cost_usd
+    expect(sessionArgs[1]).toBe("sess_123"); // session_id
+    expect(sessionArgs[2]).toBe("2025-01-15T10:00:00.000Z"); // started_at
+    expect(sessionArgs[3]).toBe("2025-01-15T15:00:00.000Z"); // expires_at (5h later)
+    expect(sessionArgs[4]).toBe(100); // input_tokens
+    expect(sessionArgs[5]).toBe(50); // output_tokens
+    expect(sessionArgs[6]).toBe(10); // cache_creation_tokens
+    expect(sessionArgs[7]).toBe(5); // cache_read_tokens
+    expect(sessionArgs[8]).toBe(0.05); // cost_usd
   });
 
   it("defaults missing session_id to unknown", () => {
     const stdout = JSON.stringify({ usage: {}, total_cost_usd: 0 });
     const { sessionArgs } = parseWarmupOutput(stdout);
-    expect(sessionArgs[0]).toBe("unknown");
+    expect(sessionArgs[1]).toBe("unknown");
   });
 
   it("defaults missing usage fields to 0", () => {
     const stdout = JSON.stringify({ session_id: "s1" });
     const { sessionArgs } = parseWarmupOutput(stdout);
-    expect(sessionArgs[3]).toBe(0); // input_tokens
-    expect(sessionArgs[4]).toBe(0); // output_tokens
-    expect(sessionArgs[5]).toBe(0); // cache_creation_tokens
-    expect(sessionArgs[6]).toBe(0); // cache_read_tokens
+    expect(sessionArgs[4]).toBe(0); // input_tokens
+    expect(sessionArgs[5]).toBe(0); // output_tokens
+    expect(sessionArgs[6]).toBe(0); // cache_creation_tokens
+    expect(sessionArgs[7]).toBe(0); // cache_read_tokens
   });
 
   it("defaults missing cost to 0", () => {
     const stdout = JSON.stringify({ session_id: "s1" });
     const { sessionArgs } = parseWarmupOutput(stdout);
-    expect(sessionArgs[7]).toBe(0);
+    expect(sessionArgs[8]).toBe(0);
   });
 
   it("throws on invalid JSON", () => {

@@ -12,6 +12,7 @@ import {
   getDailySchedules,
   updateDailyScheduleNext,
   deleteDailySchedule,
+  getActiveSessions,
 } from "./db";
 import Database from "better-sqlite3";
 import { mkdtempSync, rmSync } from "fs";
@@ -28,7 +29,7 @@ describe("sessions", () => {
   const now = new Date().toISOString();
 
   it("insertSession returns session with all fields", () => {
-    const s = insertSession("s1", now, futureDate, 100, 50, 10, 5, 0.05);
+    const s = insertSession("default", "s1", now, futureDate, 100, 50, 10, 5, 0.05);
     expect(s.id).toBeDefined();
     expect(s.session_id).toBe("s1");
     expect(s.started_at).toBe(now);
@@ -41,37 +42,37 @@ describe("sessions", () => {
   });
 
   it("getActiveSession returns active session", () => {
-    insertSession("s1", now, futureDate, 0, 0, 0, 0, 0);
-    const active = getActiveSession();
+    insertSession("default", "s1", now, futureDate, 0, 0, 0, 0, 0);
+    const active = getActiveSession("default");
     expect(active).toBeDefined();
     expect(active!.session_id).toBe("s1");
   });
 
   it("getActiveSession returns undefined for expired session", () => {
-    insertSession("s1", pastDate, pastDate, 0, 0, 0, 0, 0);
-    expect(getActiveSession()).toBeUndefined();
+    insertSession("default", "s1", pastDate, pastDate, 0, 0, 0, 0, 0);
+    expect(getActiveSession("default")).toBeUndefined();
   });
 
   it("getActiveSession returns most recent when multiple active", () => {
     const farFuture = new Date(Date.now() + 7_200_000).toISOString();
-    insertSession("s1", pastDate, futureDate, 0, 0, 0, 0, 0);
-    insertSession("s2", now, farFuture, 0, 0, 0, 0, 0);
-    const active = getActiveSession();
+    insertSession("default", "s1", pastDate, futureDate, 0, 0, 0, 0, 0);
+    insertSession("default", "s2", now, farFuture, 0, 0, 0, 0, 0);
+    const active = getActiveSession("default");
     expect(active!.session_id).toBe("s2");
   });
 
   it("getSessionHistory returns sessions DESC ordered", () => {
-    insertSession("s1", "2025-01-01T00:00:00Z", futureDate, 0, 0, 0, 0, 0);
-    insertSession("s2", "2025-01-02T00:00:00Z", futureDate, 0, 0, 0, 0, 0);
-    insertSession("s3", "2025-01-03T00:00:00Z", futureDate, 0, 0, 0, 0, 0);
+    insertSession("default", "s1", "2025-01-01T00:00:00Z", futureDate, 0, 0, 0, 0, 0);
+    insertSession("default", "s2", "2025-01-02T00:00:00Z", futureDate, 0, 0, 0, 0, 0);
+    insertSession("default", "s3", "2025-01-03T00:00:00Z", futureDate, 0, 0, 0, 0, 0);
     const history = getSessionHistory(10);
     expect(history.map((s) => s.session_id)).toEqual(["s3", "s2", "s1"]);
   });
 
   it("getSessionHistory respects limit", () => {
-    insertSession("s1", "2025-01-01T00:00:00Z", futureDate, 0, 0, 0, 0, 0);
-    insertSession("s2", "2025-01-02T00:00:00Z", futureDate, 0, 0, 0, 0, 0);
-    insertSession("s3", "2025-01-03T00:00:00Z", futureDate, 0, 0, 0, 0, 0);
+    insertSession("default", "s1", "2025-01-01T00:00:00Z", futureDate, 0, 0, 0, 0, 0);
+    insertSession("default", "s2", "2025-01-02T00:00:00Z", futureDate, 0, 0, 0, 0, 0);
+    insertSession("default", "s3", "2025-01-03T00:00:00Z", futureDate, 0, 0, 0, 0, 0);
     expect(getSessionHistory(2)).toHaveLength(2);
   });
 });
@@ -82,7 +83,7 @@ describe("schedules", () => {
   const pastWarmup = new Date(Date.now() - 3_600_000).toISOString();
 
   it("insertSchedule returns schedule with all fields", () => {
-    const s = insertSchedule(futureTarget, 2, futureWarmup);
+    const s = insertSchedule("default", futureTarget, 2, futureWarmup);
     expect(s.id).toBeDefined();
     expect(s.target_datetime).toBe(futureTarget);
     expect(s.hours_remaining).toBe(2);
@@ -91,36 +92,36 @@ describe("schedules", () => {
   });
 
   it("getPendingSchedules returns unfired future schedules", () => {
-    insertSchedule(futureTarget, 2, futureWarmup);
+    insertSchedule("default", futureTarget, 2, futureWarmup);
     const pending = getPendingSchedules();
     expect(pending).toHaveLength(1);
   });
 
   it("getPendingSchedules excludes fired schedules", () => {
-    const s = insertSchedule(futureTarget, 2, futureWarmup);
+    const s = insertSchedule("default", futureTarget, 2, futureWarmup);
     markScheduleFired(s.id);
     expect(getPendingSchedules()).toHaveLength(0);
   });
 
   it("getPendingSchedules excludes past warmup_at", () => {
-    insertSchedule(futureTarget, 2, pastWarmup);
+    insertSchedule("default", futureTarget, 2, pastWarmup);
     expect(getPendingSchedules()).toHaveLength(0);
   });
 
   it("markScheduleFired sets fired flag", () => {
-    const s = insertSchedule(futureTarget, 2, futureWarmup);
+    const s = insertSchedule("default", futureTarget, 2, futureWarmup);
     markScheduleFired(s.id);
     expect(getPendingSchedules()).toHaveLength(0);
   });
 
   it("deleteSchedule removes unfired schedule", () => {
-    const s = insertSchedule(futureTarget, 2, futureWarmup);
+    const s = insertSchedule("default", futureTarget, 2, futureWarmup);
     expect(deleteSchedule(s.id)).toBe(true);
     expect(getPendingSchedules()).toHaveLength(0);
   });
 
   it("deleteSchedule returns false for fired schedule", () => {
-    const s = insertSchedule(futureTarget, 2, futureWarmup);
+    const s = insertSchedule("default", futureTarget, 2, futureWarmup);
     markScheduleFired(s.id);
     expect(deleteSchedule(s.id)).toBe(false);
   });
@@ -137,7 +138,7 @@ describe("daily schedules", () => {
   const nextWarmup = new Date(Date.now() + 24 * 3_600_000 + 3_600_000).toISOString();
 
   it("insertDailySchedule returns schedule with all fields", () => {
-    const s = insertDailySchedule("7:29 AM", 5, target, warmup);
+    const s = insertDailySchedule("default", "7:29 AM", 5, target, warmup);
     expect(s.id).toBeDefined();
     expect(s.times_of_day).toBe("7:29 AM");
     expect(s.hours_remaining).toBe(5);
@@ -147,8 +148,8 @@ describe("daily schedules", () => {
   });
 
   it("getDailySchedules returns schedules ordered by next warmup", () => {
-    insertDailySchedule("10:00", 5, nextTarget, nextWarmup);
-    insertDailySchedule("7:29 AM", 5, target, warmup);
+    insertDailySchedule("default", "10:00", 5, nextTarget, nextWarmup);
+    insertDailySchedule("default", "7:29 AM", 5, target, warmup);
 
     const daily = getDailySchedules();
 
@@ -156,7 +157,7 @@ describe("daily schedules", () => {
   });
 
   it("updateDailyScheduleNext updates next occurrence and last fired time", () => {
-    const s = insertDailySchedule("7:29 AM", 5, target, warmup);
+    const s = insertDailySchedule("default", "7:29 AM", 5, target, warmup);
     const firedAt = new Date().toISOString();
 
     const updated = updateDailyScheduleNext(s.id, nextTarget, nextWarmup, firedAt);
@@ -168,7 +169,7 @@ describe("daily schedules", () => {
   });
 
   it("deleteDailySchedule removes schedule", () => {
-    const s = insertDailySchedule("7:29 AM", 5, target, warmup);
+    const s = insertDailySchedule("default", "7:29 AM", 5, target, warmup);
 
     expect(deleteDailySchedule(s.id)).toBe(true);
     expect(getDailySchedules()).toHaveLength(0);
@@ -179,10 +180,58 @@ describe("daily schedules", () => {
   });
 
   it("stores several times of day on one schedule", () => {
-    const s = insertDailySchedule("07:00, 13:00, 18:00", 5, target, warmup);
+    const s = insertDailySchedule("default", "07:00, 13:00, 18:00", 5, target, warmup);
 
     expect(getDailySchedules()[0].times_of_day).toBe("07:00, 13:00, 18:00");
     expect(s.times_of_day).toBe("07:00, 13:00, 18:00");
+  });
+});
+
+describe("accounts", () => {
+  const futureDate = new Date(Date.now() + 3_600_000).toISOString();
+  const now = new Date().toISOString();
+
+  it("keeps each account's active session separate", () => {
+    insertSession("work", "w1", now, futureDate, 1, 1, 0, 0, 0);
+    insertSession("personal", "p1", now, futureDate, 1, 1, 0, 0, 0);
+
+    expect(getActiveSession("work")!.session_id).toBe("w1");
+    expect(getActiveSession("personal")!.session_id).toBe("p1");
+    expect(getActiveSession("absent")).toBeUndefined();
+  });
+
+  it("getActiveSessions reports one row per account, in the order asked", () => {
+    insertSession("work", "w1", now, futureDate, 1, 1, 0, 0, 0);
+    insertSession("personal", "p1", now, futureDate, 1, 1, 0, 0, 0);
+
+    expect(getActiveSessions(["personal", "work"]).map((s) => s.account)).toEqual([
+      "personal",
+      "work",
+    ]);
+  });
+
+  it("getActiveSessions skips accounts with no live session", () => {
+    insertSession("work", "w1", now, futureDate, 1, 1, 0, 0, 0);
+
+    expect(getActiveSessions(["work", "personal"]).map((s) => s.account)).toEqual(["work"]);
+  });
+
+  it("filters session history by account, or returns all", () => {
+    insertSession("work", "w1", now, futureDate, 1, 1, 0, 0, 0);
+    insertSession("personal", "p1", now, futureDate, 1, 1, 0, 0, 0);
+
+    expect(getSessionHistory(10, "work").map((s) => s.session_id)).toEqual(["w1"]);
+    expect(getSessionHistory(10)).toHaveLength(2);
+  });
+
+  it("records the account on schedules and daily schedules", () => {
+    const target = new Date(Date.now() + 7_200_000).toISOString();
+    const warmup = new Date(Date.now() + 3_600_000).toISOString();
+
+    expect(insertSchedule("personal", target, 5, warmup).account).toBe("personal");
+    expect(insertDailySchedule("personal", "07:00", 5, target, warmup).account).toBe(
+      "personal"
+    );
   });
 });
 
@@ -226,13 +275,46 @@ describe("daily schedule migration", () => {
     expect(daily).toHaveLength(1);
     expect(daily[0].times_of_day).toBe("7:00 AM");
     expect(daily[0].hours_remaining).toBe(5);
+    // Rows that predate multi-account support belong to the primary account.
+    expect(daily[0].account).toBe("default");
+  });
+
+  it("backfills the account column on pre-account tables", () => {
+    const legacy = new Database(dbPath);
+    legacy.exec(`
+      CREATE TABLE sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        input_tokens INTEGER DEFAULT 0,
+        output_tokens INTEGER DEFAULT 0,
+        cache_creation_tokens INTEGER DEFAULT 0,
+        cache_read_tokens INTEGER DEFAULT 0,
+        cost_usd REAL DEFAULT 0
+      );
+    `);
+    legacy
+      .prepare(
+        `INSERT INTO sessions (session_id, started_at, expires_at)
+         VALUES ('old', '2026-07-16T22:00:04.013Z', '2026-07-17T03:00:04.013Z')`
+      )
+      .run();
+    legacy.close();
+
+    initDb(dbPath);
+
+    const history = getSessionHistory(10);
+    expect(history).toHaveLength(1);
+    expect(history[0].session_id).toBe("old");
+    expect(history[0].account).toBe("default");
   });
 
   it("is a no-op on a fresh database", () => {
     initDb(dbPath);
     initDb(dbPath);
 
-    const s = insertDailySchedule("07:00, 13:00", 5, "2026-09-07T22:00:00.000Z", "2026-09-07T22:00:00.000Z");
+    const s = insertDailySchedule("default", "07:00, 13:00", 5, "2026-09-07T22:00:00.000Z", "2026-09-07T22:00:00.000Z");
     expect(s.times_of_day).toBe("07:00, 13:00");
   });
 });

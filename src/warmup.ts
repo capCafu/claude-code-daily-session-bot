@@ -1,9 +1,13 @@
 import { spawn } from "child_process";
-import { SESSION_DURATION_MS } from "./config";
+import { PRIMARY_ACCOUNT, SESSION_DURATION_MS } from "./config";
+import type { Account } from "./config";
 import { insertSession } from "./db";
 import type { WarmupResult, Session } from "./types";
 
-export function parseWarmupOutput(stdout: string): {
+export function parseWarmupOutput(
+  stdout: string,
+  account = PRIMARY_ACCOUNT.name
+): {
   warmupResult: WarmupResult;
   sessionArgs: Parameters<typeof insertSession>;
 } {
@@ -27,6 +31,7 @@ export function parseWarmupOutput(stdout: string): {
       cost_usd: json.total_cost_usd,
     },
     sessionArgs: [
+      account,
       json.session_id ?? "unknown",
       now.toISOString(),
       expiresAt.toISOString(),
@@ -65,11 +70,21 @@ export function formatWarmupError(
   return `exit code ${code ?? "unknown"}`;
 }
 
-export function warmup(): Promise<{ result: WarmupResult; session?: Session }> {
+/**
+ * Runs a warmup for one account. Accounts are isolated by giving the child its
+ * own CLAUDE_CONFIG_DIR; an account without one (the single-account default)
+ * inherits the ambient environment unchanged.
+ */
+export function warmup(
+  account: Account = PRIMARY_ACCOUNT
+): Promise<{ result: WarmupResult; session?: Session }> {
   return new Promise((resolve) => {
     const proc = spawn("claude", ["-p", "ready", "--output-format", "json"], {
       timeout: 60_000,
       stdio: ["ignore", "pipe", "pipe"],
+      env: account.configDir
+        ? { ...process.env, CLAUDE_CONFIG_DIR: account.configDir }
+        : process.env,
     });
 
     let stdout = "";
@@ -86,7 +101,7 @@ export function warmup(): Promise<{ result: WarmupResult; session?: Session }> {
       }
 
       try {
-        const { warmupResult, sessionArgs } = parseWarmupOutput(stdout);
+        const { warmupResult, sessionArgs } = parseWarmupOutput(stdout, account.name);
         const session = insertSession(...sessionArgs);
         resolve({ result: warmupResult, session });
       } catch (err) {

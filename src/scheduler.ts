@@ -1,5 +1,6 @@
 import * as chrono from "chrono-node";
-import { SESSION_DURATION_MS, TIMEZONE } from "./config";
+import { PRIMARY_ACCOUNT, SESSION_DURATION_MS, TIMEZONE, findAccount } from "./config";
+import type { Account } from "./config";
 import {
   deleteDailySchedule,
   getPendingSchedules,
@@ -51,12 +52,22 @@ export function restoreSchedules(): void {
   }
 }
 
+// A schedule stored under an account that is no longer configured still has to
+// fire somehow; the primary account is the safest stand-in.
+function accountFor(name: string): Account {
+  return findAccount(name) ?? PRIMARY_ACCOUNT;
+}
+
 export function calculateWarmupAt(targetDatetime: Date, hoursRemaining: number): Date {
   const warmupAtMs = targetDatetime.getTime() - (SESSION_DURATION_MS - hoursRemaining * 3600_000);
   return new Date(warmupAtMs);
 }
 
-export function addSchedule(targetDatetime: Date, hoursRemaining: number): Schedule | string {
+export function addSchedule(
+  targetDatetime: Date,
+  hoursRemaining: number,
+  account = PRIMARY_ACCOUNT.name
+): Schedule | string {
   const warmupAt = calculateWarmupAt(targetDatetime, hoursRemaining);
 
   if (warmupAt.getTime() <= Date.now()) {
@@ -64,6 +75,7 @@ export function addSchedule(targetDatetime: Date, hoursRemaining: number): Sched
   }
 
   const schedule = insertSchedule(
+    account,
     targetDatetime.toISOString(),
     hoursRemaining,
     warmupAt.toISOString()
@@ -145,7 +157,8 @@ const DAILY_TIME_HINT = "Try: \`7:29 AM\`, \`07:29, 13:00\`, or \`19:29\`";
 
 export function addDailySchedule(
   timesInput: string,
-  hoursRemaining: number
+  hoursRemaining: number,
+  account = PRIMARY_ACCOUNT.name
 ): DailySchedule | string {
   const times = parseTimesOfDay(timesInput);
   if (times.length === 0) {
@@ -165,6 +178,7 @@ export function addDailySchedule(
   }
 
   const schedule = insertDailySchedule(
+    account,
     times.join(", "),
     hoursRemaining,
     next.targetDatetime.toISOString(),
@@ -233,7 +247,8 @@ function normalizeWorkdayTimes(startInput: string, endInput: string): [string, s
 export function planWorkday(
   workdayInput: string,
   leadHours: number,
-  now = new Date()
+  now = new Date(),
+  offsetMs = 0
 ): WorkdayPlan | string {
   const range = workdayInput.match(WORKDAY_RANGE);
   if (!range) {
@@ -258,7 +273,7 @@ export function planWorkday(
   const overnight = end.getTime() <= start.getTime();
   const endTime = overnight ? end.getTime() + 24 * 60 * 60 * 1000 : end.getTime();
 
-  const warmups: Date[] = [calculateWarmupAt(start, leadHours)];
+  const warmups: Date[] = [new Date(calculateWarmupAt(start, leadHours).getTime() + offsetMs)];
   while (warmups.length < MAX_WORKDAY_WARMUPS) {
     const previous = warmups[warmups.length - 1];
     const next = new Date(
@@ -277,19 +292,63 @@ export function planWorkday(
   };
 }
 
-export function addWorkdaySchedule(
+export interface AccountWorkdayPlan {
+  account: string;
+  times: string[];
+}
+
+/**
+ * Spreads a workday across several accounts. Each extra account is offset by an
+ * even fraction of a session, so their windows do not all reset at the same
+ * moment: with two accounts a fresh window arrives every 2.5 hours instead of
+ * every 5. A single account is simply the unstaggered plan.
+ */
+export function planStaggeredWorkday(
   workdayInput: string,
-  leadHours: number
-): { schedule: DailySchedule; plan: WorkdayPlan } | string {
-  const plan = planWorkday(workdayInput, leadHours);
-  if (typeof plan === "string") return plan;
+  leadHours: number,
+  accountNames: string[],
+  now = new Date()
+): { plan: WorkdayPlan; perAccount: AccountWorkdayPlan[] } | string {
+  if (accountNames.length === 0) {
+    return "No accounts to schedule.";
+  }
 
-  // The planned times are absolute warmup times, so the schedule wants a full
-  // window remaining at each one: warmup_at === the time itself.
-  const schedule = addDailySchedule(plan.times.join(", "), SESSION_HOURS);
-  if (typeof schedule === "string") return schedule;
+  const stride = SESSION_DURATION_MS / accountNames.length;
+  const perAccount: AccountWorkdayPlan[] = [];
+  let firstPlan: WorkdayPlan | undefined;
 
-  return { schedule, plan };
+  for (const [index, account] of accountNames.entries()) {
+    const plan = planWorkday(workdayInput, leadHours, now, index * stride);
+    if (typeof plan === "string") return plan;
+    if (!firstPlan) firstPlan = plan;
+    perAccount.push({ account, times: plan.times });
+  }
+
+  return { plan: firstPlan!, perAccount };
+}
+
+export function addWorkdaySchedules(
+  workdayInput: string,
+  leadHours: number,
+  accountNames: string[]
+): { plan: WorkdayPlan; created: DailySchedule[] } | string {
+  const staggered = planStaggeredWorkday(workdayInput, leadHours, accountNames);
+  if (typeof staggered === "string") return staggered;
+
+  const created: DailySchedule[] = [];
+  for (const { account, times } of staggered.perAccount) {
+    // An offset account can have no warmup left inside a short workday.
+    if (times.length === 0) continue;
+    const schedule = addDailySchedule(times.join(", "), SESSION_HOURS, account);
+    if (typeof schedule === "string") return schedule;
+    created.push(schedule);
+  }
+
+  if (created.length === 0) {
+    return "That workday is too short to fit a warmup for any account.";
+  }
+
+  return { plan: staggered.plan, created };
 }
 
 export function cancelSchedule(id: number): boolean {
@@ -318,7 +377,7 @@ function setTimer(schedule: Schedule): void {
     timers.delete(schedule.id);
     markScheduleFired(schedule.id);
 
-    const { result } = await warmup();
+    const { result } = await warmup(accountFor(schedule.account));
     onFire(schedule, result.success, result.error);
   }, delay);
 
@@ -352,7 +411,7 @@ function setDailyTimer(schedule: DailySchedule): void {
   const timer = setTimeout(async () => {
     dailyTimers.delete(nextSchedule.id);
 
-    const { result } = await warmup();
+    const { result } = await warmup(accountFor(nextSchedule.account));
     const next = calculateNextDailyOccurrence(
       nextSchedule.times_of_day,
       nextSchedule.hours_remaining

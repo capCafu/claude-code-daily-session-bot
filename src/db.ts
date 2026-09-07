@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { DB_PATH } from "./config";
+import { DB_PATH, PRIMARY_ACCOUNT } from "./config";
 import type { Session, Schedule, DailySchedule } from "./types";
 
 let db: Database.Database;
@@ -18,7 +18,8 @@ export function initDb(path?: string): void {
       output_tokens INTEGER DEFAULT 0,
       cache_creation_tokens INTEGER DEFAULT 0,
       cache_read_tokens INTEGER DEFAULT 0,
-      cost_usd REAL DEFAULT 0
+      cost_usd REAL DEFAULT 0,
+      account TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS schedules (
@@ -27,7 +28,8 @@ export function initDb(path?: string): void {
       hours_remaining REAL NOT NULL,
       warmup_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
-      fired INTEGER DEFAULT 0
+      fired INTEGER DEFAULT 0,
+      account TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS daily_schedules (
@@ -37,19 +39,38 @@ export function initDb(path?: string): void {
       target_datetime TEXT NOT NULL,
       warmup_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
-      last_fired_at TEXT
+      last_fired_at TEXT,
+      account TEXT NOT NULL
     );
   `);
 
   migrateDailySchedules();
+  migrateAccounts();
+}
+
+function columnNames(table: string): string[] {
+  return (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(
+    (c) => c.name
+  );
+}
+
+// Rows predate multi-account support, so they belong to the primary account.
+// The name is validated by config.parseAccounts, so it is safe to inline.
+function migrateAccounts(): void {
+  for (const table of ["sessions", "schedules", "daily_schedules"]) {
+    if (columnNames(table).includes("account")) continue;
+    db.exec(
+      `ALTER TABLE ${table} ADD COLUMN account TEXT NOT NULL DEFAULT '${PRIMARY_ACCOUNT.name}'`
+    );
+  }
 }
 
 // Daily schedules used to hold a single `time_of_day`; they now hold a
 // comma-separated list, so existing rows only need the column renamed.
 function migrateDailySchedules(): void {
-  const columns = db.prepare("PRAGMA table_info(daily_schedules)").all() as { name: string }[];
-  const hasLegacyColumn = columns.some((c) => c.name === "time_of_day");
-  const hasCurrentColumn = columns.some((c) => c.name === "times_of_day");
+  const columns = columnNames("daily_schedules");
+  const hasLegacyColumn = columns.includes("time_of_day");
+  const hasCurrentColumn = columns.includes("times_of_day");
 
   if (hasLegacyColumn && !hasCurrentColumn) {
     db.exec("ALTER TABLE daily_schedules RENAME COLUMN time_of_day TO times_of_day");
@@ -57,6 +78,7 @@ function migrateDailySchedules(): void {
 }
 
 export function insertSession(
+  account: string,
   sessionId: string,
   startedAt: string,
   expiresAt: string,
@@ -67,10 +89,11 @@ export function insertSession(
   costUsd: number
 ): Session {
   const stmt = db.prepare(`
-    INSERT INTO sessions (session_id, started_at, expires_at, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cost_usd)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO sessions (account, session_id, started_at, expires_at, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cost_usd)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
+    account,
     sessionId,
     startedAt,
     expiresAt,
@@ -85,28 +108,49 @@ export function insertSession(
     .get(result.lastInsertRowid) as Session;
 }
 
-export function getActiveSession(): Session | undefined {
+export function getActiveSession(account: string): Session | undefined {
   return db
-    .prepare("SELECT * FROM sessions WHERE expires_at > ? ORDER BY started_at DESC LIMIT 1")
-    .get(new Date().toISOString()) as Session | undefined;
+    .prepare(
+      "SELECT * FROM sessions WHERE account = ? AND expires_at > ? ORDER BY started_at DESC LIMIT 1"
+    )
+    .get(account, new Date().toISOString()) as Session | undefined;
 }
 
-export function getSessionHistory(limit = 10): Session[] {
+/** The newest live session for each account that has one, primary order. */
+export function getActiveSessions(accounts: string[]): Session[] {
+  return accounts
+    .map((account) => getActiveSession(account))
+    .filter((s): s is Session => s !== undefined);
+}
+
+export function getSessionHistory(limit = 10, account?: string): Session[] {
+  if (account === undefined) {
+    return db
+      .prepare("SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?")
+      .all(limit) as Session[];
+  }
   return db
-    .prepare("SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?")
-    .all(limit) as Session[];
+    .prepare("SELECT * FROM sessions WHERE account = ? ORDER BY started_at DESC LIMIT ?")
+    .all(account, limit) as Session[];
 }
 
 export function insertSchedule(
+  account: string,
   targetDatetime: string,
   hoursRemaining: number,
   warmupAt: string
 ): Schedule {
   const stmt = db.prepare(`
-    INSERT INTO schedules (target_datetime, hours_remaining, warmup_at, created_at, fired)
-    VALUES (?, ?, ?, ?, 0)
+    INSERT INTO schedules (account, target_datetime, hours_remaining, warmup_at, created_at, fired)
+    VALUES (?, ?, ?, ?, ?, 0)
   `);
-  const result = stmt.run(targetDatetime, hoursRemaining, warmupAt, new Date().toISOString());
+  const result = stmt.run(
+    account,
+    targetDatetime,
+    hoursRemaining,
+    warmupAt,
+    new Date().toISOString()
+  );
   return db
     .prepare("SELECT * FROM schedules WHERE id = ?")
     .get(result.lastInsertRowid) as Schedule;
@@ -128,16 +172,18 @@ export function deleteSchedule(id: number): boolean {
 }
 
 export function insertDailySchedule(
+  account: string,
   timesOfDay: string,
   hoursRemaining: number,
   targetDatetime: string,
   warmupAt: string
 ): DailySchedule {
   const stmt = db.prepare(`
-    INSERT INTO daily_schedules (times_of_day, hours_remaining, target_datetime, warmup_at, created_at)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO daily_schedules (account, times_of_day, hours_remaining, target_datetime, warmup_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
+    account,
     timesOfDay,
     hoursRemaining,
     targetDatetime,

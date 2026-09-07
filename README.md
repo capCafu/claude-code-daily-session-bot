@@ -14,8 +14,8 @@ This bot starts sessions while you sleep. Schedule `/schedule tomorrow 9am` and 
 
 | Command                        | Description                                                                      |
 | ------------------------------ | -------------------------------------------------------------------------------- |
-| `/warmup`                      | Start a session now via `claude -p`                                              |
-| `/session`                     | Show active session info (time remaining, tokens, expiry)                        |
+| `/warmup [account]`            | Start a session now via `claude -p` (`all` warms every account)                  |
+| `/session [account]`           | Show active session info (time remaining, tokens, expiry)                        |
 | `/schedule <datetime> [hours]` | Schedule a warmup. At `<datetime>`, you'll have `[hours]` remaining (default: 2) |
 | `/schedules`                   | List pending scheduled warmups                                                   |
 | `/cancel <id>`                 | Cancel a scheduled warmup                                                        |
@@ -23,7 +23,8 @@ This bot starts sessions while you sleep. Schedule `/schedule tomorrow 9am` and 
 | `/workday <start>-<end> [lead]` | Plan a day's warmups around your working hours (`[lead]` hours left at `<start>`, default: 2) |
 | `/dailies`                     | List daily scheduled warmups                                                     |
 | `/cancel_daily <id>`           | Cancel a daily scheduled warmup                                                  |
-| `/history`                     | Show recent session history                                                      |
+| `/history [account]`           | Show recent session history                                                      |
+| `/accounts`                    | List configured accounts and their current windows                               |
 
 <details>
 <summary>Click to show screenshots</summary>
@@ -82,6 +83,58 @@ For a 9-to-6 day that yields three separate quota allowances covering 8.8 of
 your 9 working hours, versus two if you simply warm up at 9:00. Ranges can be
 written `9am-6pm`, `9:00-18:00`, `9-18`, `9-6`, or `9am to 6pm`; overnight
 shifts (`21:00-06:00`) work too.
+
+## Multiple accounts
+
+One bot can drive several Claude accounts. Set `CLAUDE_ACCOUNTS` to a
+comma-separated list of names — the first is the primary:
+
+```
+CLAUDE_ACCOUNTS=work,personal
+CLAUDE_ACCOUNTS_DIR=/data/accounts
+```
+
+Each account is isolated by its own `CLAUDE_CONFIG_DIR`, which the bot passes to
+the `claude` child process. Log each one in once, on the host:
+
+```bash
+CLAUDE_CONFIG_DIR="$PWD/data/accounts/work" claude auth login
+CLAUDE_CONFIG_DIR="$PWD/data/accounts/personal" claude auth login
+```
+
+`data/` is already mounted at `/data` in the container, so no extra mount is
+needed. Credentials refresh themselves in place, and each account keeps its own
+session transcripts.
+
+Commands then take an optional trailing account name. Listings cover every
+account; commands that act default to the primary:
+
+```
+/warmup                       # primary account
+/warmup personal              # that account
+/warmup all                   # every account
+/session                      # every account's window
+/daily 7:00, 13:00 5h work    # schedule for one account
+/accounts                     # names, config dirs, current windows
+```
+
+`/workday` is the exception: with no account named it plans **every** account and
+staggers them, offsetting each by an even fraction of a session so their windows
+do not all reset together:
+
+```
+/workday 9am-6pm
+→ work:     06:00, 11:05, 16:10
+  personal: 08:30, 13:35
+```
+
+Read as a single timeline, a fresh window now arrives at 06:00, 08:30, 11:05,
+13:35 and 16:10 — every ~2.5 hours instead of every 5, with two live windows at
+any moment. Name an account (`/workday 9am-6pm work`) to plan just that one.
+
+Leaving `CLAUDE_ACCOUNTS` unset runs a single account exactly as before, with no
+account labels in any output. Existing rows are attributed to the primary
+account when the database is migrated.
 
 ## How it works
 

@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   addDailySchedule,
-  addWorkdaySchedule,
+  addWorkdaySchedules,
   calculateNextDailyOccurrence,
   calculateWarmupAt,
   parseTimesOfDay,
+  planStaggeredWorkday,
   planWorkday,
 } from "./scheduler";
 
@@ -272,8 +273,88 @@ describe("planWorkday", () => {
 });
 
 // Rejected before any DB write, so no database is needed.
-describe("addWorkdaySchedule validation", () => {
+describe("addWorkdaySchedules validation", () => {
   it("passes the planner's error through", () => {
-    expect(addWorkdaySchedule("9am", 2)).toContain("Could not read a start and end time");
+    expect(addWorkdaySchedules("9am", 2, ["default"])).toContain(
+      "Could not read a start and end time"
+    );
+  });
+
+  it("rejects an empty account list", () => {
+    expect(addWorkdaySchedules("9am-6pm", 2, [])).toContain("No accounts");
+  });
+});
+
+describe("planStaggeredWorkday", () => {
+  const now = new Date("2025-01-15T00:00:00.000Z");
+  const stagger = (accounts: string[], input = "9am-6pm", lead = 2) => {
+    const result = planStaggeredWorkday(input, lead, accounts, now);
+    if (typeof result === "string") throw new Error(`unexpected error: ${result}`);
+    return result;
+  };
+
+  it("leaves a single account unstaggered", () => {
+    const { perAccount } = stagger(["work"]);
+    expect(perAccount).toEqual([{ account: "work", times: ["06:00", "11:05", "16:10"] }]);
+  });
+
+  it("offsets a second account by half a session", () => {
+    const { perAccount } = stagger(["work", "personal"]);
+    expect(perAccount[0]).toEqual({ account: "work", times: ["06:00", "11:05", "16:10"] });
+    // 06:00 + 2.5h, then chained the same way.
+    expect(perAccount[1]).toEqual({ account: "personal", times: ["08:30", "13:35"] });
+  });
+
+  it("interleaves the two accounts' windows", () => {
+    const { perAccount } = stagger(["work", "personal"]);
+    const arrivals = perAccount
+      .flatMap((a) => a.times.map((t) => ({ time: t, account: a.account })))
+      .sort((x, y) => x.time.localeCompare(y.time));
+
+    expect(arrivals.map((a) => `${a.time} ${a.account}`)).toEqual([
+      "06:00 work",
+      "08:30 personal",
+      "11:05 work",
+      "13:35 personal",
+      "16:10 work",
+    ]);
+  });
+
+  it("never leaves much more than half a session between resets", () => {
+    const { perAccount } = stagger(["work", "personal"]);
+    const minutes = perAccount
+      .flatMap((a) => a.times)
+      .map((t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3)))
+      .sort((a, b) => a - b);
+
+    const gaps = minutes.slice(1).map((m, i) => m - minutes[i]);
+    // Half a session is 150 min, but each chained warmup carries the 5-minute
+    // handover margin, so the gaps alternate 150 / 155 rather than staying flat.
+    expect(gaps).toEqual([150, 155, 150, 155]);
+    expect(Math.max(...gaps)).toBeLessThanOrEqual(2.5 * 60 + 5);
+  });
+
+  it("offsets a third account by a third of a session", () => {
+    const { perAccount } = stagger(["a", "b", "c"]);
+    expect(perAccount[0].times[0]).toBe("06:00");
+    expect(perAccount[1].times[0]).toBe("07:40"); // +1h40m
+    expect(perAccount[2].times[0]).toBe("09:20"); // +3h20m
+  });
+
+  it("keeps the shared workday interpretation on the returned plan", () => {
+    const { plan } = stagger(["work", "personal"]);
+    expect(plan.startLabel).toBe("09:00");
+    expect(plan.endLabel).toBe("18:00");
+    expect(plan.leadHours).toBe(2);
+  });
+
+  it("passes a planning error straight through", () => {
+    expect(planStaggeredWorkday("breakfast-6pm", 2, ["work"], now)).toContain(
+      "Could not parse workday time"
+    );
+  });
+
+  it("rejects an empty account list", () => {
+    expect(planStaggeredWorkday("9am-6pm", 2, [], now)).toContain("No accounts");
   });
 });
